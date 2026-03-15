@@ -31,7 +31,7 @@ class ArchiMate(anywidget.AnyWidget):
     # Display settings
     width = traitlets.Unicode(default_value="100%").tag(sync=True)
     height = traitlets.Int(default_value=700).tag(sync=True)
-    dark_mode = traitlets.Bool(default_value=False).tag(sync=True)
+    dark_mode = traitlets.Bool(default_value=True).tag(sync=True)
 
     # Interaction state
     selected_element = traitlets.Dict(allow_none=True, default_value=None).tag(sync=True)
