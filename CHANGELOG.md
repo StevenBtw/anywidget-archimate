@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.4] - (2026-03-16)
+
+### New Features
+
+- **Automatic theme detection**: Auto-detects host dark mode (marimo Tailwind `class="dark"`, `data-theme`, or `prefers-color-scheme`) and syncs the widget theme automatically — dark mode toggle is hidden when the host controls the theme
+
+### Improvements
+
+- **Neutral grey palette**: Light and dark mode colors updated to neutral grey tones for a cleaner look and better integration with marimo
+
 ## [0.1.3] - (2026-03-15)
 
 ### New Features
