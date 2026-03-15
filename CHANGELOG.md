@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.2] - (2026-03-15)
+
+### New Features
+
+- **Demo module**: Built-in `demo_archimate()` function that creates a pre-populated ArchiMate widget with a sample enterprise architecture model (12 elements across Business, Application, and Technology layers) — no external files needed
+
 ## [0.1.1] - (2026-03-15)
 
 ### New Features
