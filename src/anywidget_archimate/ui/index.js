@@ -453,9 +453,9 @@ function computeLayout(elements, relationships, nestElements) {
 
     const g = new dagre.graphlib.Graph({ multigraph: true });
     g.setGraph({
-      rankdir: "TB",
+      rankdir: "LR",  // left-to-right within each layer (processes/flows)
       ranksep: 60,
-      nodesep: 40,
+      nodesep: 30,
       edgesep: 20,
       marginx: 30,
       marginy: 20,
@@ -618,10 +618,9 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
     return;
   }
 
-  const g = computeLayout(elements, relationships, nestElements);
-  const graphInfo = g.graph();
-  const svgWidth = graphInfo.width + 80;
-  const svgHeight = graphInfo.height + 80;
+  const layout = computeLayout(elements, relationships, nestElements);
+  const svgWidth = layout.width;
+  const svgHeight = layout.height;
 
   const svg = svgEl("svg", {
     width: "100%",
@@ -635,16 +634,15 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   const mainG = svgEl("g", { class: "aam-main" });
   svg.appendChild(mainG);
 
-  drawLayerBands(mainG, g, elements, svgWidth);
+  // Draw layer bands
+  drawLayerBands(mainG, layout, svgWidth);
 
   // Draw parent containers first (behind children)
   const containersG = svgEl("g", { class: "aam-containers" });
   mainG.appendChild(containersG);
-  for (const nodeId of g.nodes()) {
-    if (isAnchorNode(nodeId)) continue;
-    const nodeData = g.node(nodeId);
+  for (const [nodeId, nodeData] of layout.nodes) {
     const el = elements.find((e) => e.id === nodeId);
-    if (el && nodeData && nodeData._isParent) {
+    if (el && nodeData._isParent) {
       drawContainerNode(containersG, nodeData, el, darkMode);
     }
   }
@@ -652,19 +650,16 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   // Draw edges
   const edgesG = svgEl("g", { class: "aam-edges" });
   mainG.appendChild(edgesG);
-  for (const e of g.edges()) {
-    if (isAnchorEdge(e)) continue;
-    drawEdge(edgesG, g.edge(e), darkMode);
+  for (const edge of layout.edges) {
+    drawEdge(edgesG, edge, darkMode);
   }
 
-  // Draw leaf nodes (non-parent nodes)
+  // Draw leaf nodes
   const nodesG = svgEl("g", { class: "aam-nodes" });
   mainG.appendChild(nodesG);
-  for (const nodeId of g.nodes()) {
-    if (isAnchorNode(nodeId)) continue;
-    const nodeData = g.node(nodeId);
+  for (const [nodeId, nodeData] of layout.nodes) {
     const el = elements.find((e) => e.id === nodeId);
-    if (el && nodeData && !nodeData._isParent) {
+    if (el && !nodeData._isParent) {
       drawNode(nodesG, nodeData, el, darkMode);
     }
   }
@@ -673,13 +668,12 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   setupZoomPan(svg, mainG);
 }
 
-function drawLayerBands(parentG, g, elements, svgWidth) {
+function drawLayerBands(parentG, layout, svgWidth) {
+  // Compute extents from node positions
   const layerExtents = {};
-  for (const nodeId of g.nodes()) {
-    if (isAnchorNode(nodeId)) continue;
-    const nd = g.node(nodeId);
-    if (!nd) continue;
+  for (const [nodeId, nd] of layout.nodes) {
     const layer = nd.layer || "Other";
+    if (nd._isChild) continue; // children are inside parents, skip for band calc
     if (!layerExtents[layer]) layerExtents[layer] = { minY: Infinity, maxY: -Infinity };
     layerExtents[layer].minY = Math.min(layerExtents[layer].minY, nd.y - nd.height / 2);
     layerExtents[layer].maxY = Math.max(layerExtents[layer].maxY, nd.y + nd.height / 2);
