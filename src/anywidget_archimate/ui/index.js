@@ -1021,6 +1021,15 @@ function svgPoint(svg, event) {
 // Utilities
 // ============================================================================
 
+function downloadBlob(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
+}
+
 function truncate(s, n) { return !s ? "" : s.length > n ? s.slice(0, n - 1) + "\u2026" : s; }
 
 function formatType(type) {
@@ -1055,6 +1064,10 @@ function render({ model, el }) {
       <span class="aam-legend-item"><span class="aam-dot" style="background:#B5FFFF;border-color:#00B2B2"></span>Application</span>
       <span class="aam-legend-item"><span class="aam-dot" style="background:#C9E7B7;border-color:#5BA83B"></span>Technology</span>
     </span>
+    <input type="file" class="aam-file-input" accept=".xml,.archimate" style="display:none">
+    <button class="aam-btn aam-btn-upload" title="Upload .xml or .archimate file">Upload</button>
+    <button class="aam-btn aam-btn-export-svg" title="Export as SVG">SVG</button>
+    <button class="aam-btn aam-btn-export-png" title="Export as PNG">PNG</button>
     <button class="aam-btn aam-btn-fit" title="Fit to view">Fit</button>
     <button class="aam-btn aam-btn-dark" title="Toggle dark mode">&#9681;</button>
   `;
@@ -1110,6 +1123,69 @@ function render({ model, el }) {
     if (s) { const v = s.getAttribute("viewBox").split(" ").map(Number); s.setAttribute("viewBox", v.join(" ")); }
   });
   toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
+
+  // Upload
+  const fileInput = toolbar.querySelector(".aam-file-input");
+  toolbar.querySelector(".aam-btn-upload").addEventListener("click", () => { fileInput.value = ""; fileInput.click(); });
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => { model.set("_upload_xml", reader.result); model.save_changes(); };
+    reader.readAsText(file);
+  });
+
+  // Export SVG
+  toolbar.querySelector(".aam-btn-export-svg").addEventListener("click", () => {
+    const svg = graphContainer.querySelector("svg");
+    if (!svg) return;
+    const clone = svg.cloneNode(true);
+    // Inline key styles so the SVG is self-contained
+    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    style.textContent = `
+      .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .aam-node-type { font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .aam-layer-label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+    `;
+    clone.insertBefore(style, clone.firstChild);
+    // Set explicit dimensions from viewBox
+    const vb = clone.getAttribute("viewBox");
+    if (vb) { const [,,w,h] = vb.split(" "); clone.setAttribute("width", w); clone.setAttribute("height", h); }
+    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
+    downloadBlob(blob, "archimate-diagram.svg");
+  });
+
+  // Export PNG
+  toolbar.querySelector(".aam-btn-export-png").addEventListener("click", () => {
+    const svg = graphContainer.querySelector("svg");
+    if (!svg) return;
+    const clone = svg.cloneNode(true);
+    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
+    style.textContent = `
+      .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .aam-node-type { font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+      .aam-layer-label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+    `;
+    clone.insertBefore(style, clone.firstChild);
+    const vb = clone.getAttribute("viewBox");
+    let w = 1200, h = 800;
+    if (vb) { const parts = vb.split(" "); w = Math.ceil(parts[2] * 2); h = Math.ceil(parts[3] * 2); }
+    clone.setAttribute("width", w); clone.setAttribute("height", h);
+    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = model.get("dark_mode") ? "#1e1e3a" : "#fdfdfd";
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((b) => { if (b) downloadBlob(b, "archimate-diagram.png"); }, "image/png");
+    };
+    img.src = url;
+  });
 
   model.on("change:elements", rebuildDiagram);
   model.on("change:relationships", rebuildDiagram);
