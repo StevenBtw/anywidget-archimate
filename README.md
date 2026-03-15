@@ -9,6 +9,8 @@ Renders ArchiMate 3.0 Open Exchange Format XML with layered layout:
 
 Supports all 8 ArchiMate relationship types with correct arrow notation.
 
+![anywidget-archimate demo](assets/demo.png)
+
 ## Install
 
 ```bash
