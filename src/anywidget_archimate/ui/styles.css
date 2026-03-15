@@ -9,6 +9,8 @@
   --aam-btn-hover: #e5e7eb;
   --aam-graph-bg: #fdfdfd;
   --aam-detail-bg: #f9fafb;
+  --aam-panel-bg: #f9fafb;
+  --aam-panel-width: 220px;
 
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
@@ -30,13 +32,14 @@
   --aam-btn-hover: #3a3a5a;
   --aam-graph-bg: #1e1e3a;
   --aam-detail-bg: #22223a;
+  --aam-panel-bg: #16162a;
 }
 
 /* Toolbar */
 .aam-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   padding: 8px 14px;
   background: var(--aam-toolbar-bg);
   border-bottom: 1px solid var(--aam-border);
@@ -84,10 +87,174 @@
   background: var(--aam-btn-hover);
 }
 
-/* Graph container */
+.aam-btn-filter {
+  font-size: 16px;
+  padding: 2px 8px;
+  line-height: 1;
+}
+
+/* Content area: sidebar + graph */
+.aam-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ============================================================================
+   Filter Panel (left sidebar)
+   ============================================================================ */
+
+.aam-filter-panel {
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--aam-panel-bg);
+  border-right: 1px solid var(--aam-border);
+  transition: width 0.2s ease, min-width 0.2s ease;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.aam-filter-panel.aam-panel-open {
+  width: var(--aam-panel-width);
+  min-width: var(--aam-panel-width);
+}
+
+.aam-filter-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--aam-border);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.aam-filter-content {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 0;
+}
+
+.aam-filter-section {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--aam-border);
+}
+
+.aam-filter-section:last-child {
+  border-bottom: none;
+}
+
+.aam-filter-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--aam-text);
+  opacity: 0.6;
+}
+
+.aam-filter-toggles {
+  font-size: 10px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.aam-filter-toggles a {
+  color: var(--aam-text);
+  opacity: 0.5;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.aam-filter-toggles a:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.aam-filter-subheader {
+  padding: 4px 12px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  opacity: 0.5;
+}
+
+.aam-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  font-size: 12px;
+  cursor: default;
+  transition: opacity 0.15s;
+}
+
+.aam-filter-item:hover {
+  background: var(--aam-btn-hover);
+}
+
+.aam-filter-item.aam-filter-hidden {
+  opacity: 0.4;
+}
+
+.aam-filter-checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #6366f1;
+  flex-shrink: 0;
+}
+
+.aam-filter-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1.5px solid;
+  flex-shrink: 0;
+}
+
+.aam-filter-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--aam-text);
+  opacity: 0.5;
+  min-width: 16px;
+  flex-shrink: 0;
+}
+
+.aam-filter-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aam-filter-count {
+  font-size: 10px;
+  color: var(--aam-text);
+  opacity: 0.45;
+  padding: 1px 5px;
+  background: var(--aam-btn-bg);
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+/* ============================================================================
+   Graph container
+   ============================================================================ */
+
 .aam-graph-container {
   flex: 1;
   min-height: 200px;
+  min-width: 0;
   background: var(--aam-graph-bg);
   overflow: hidden;
   position: relative;
@@ -144,7 +311,10 @@
   stroke-opacity: 1;
 }
 
-/* Details panel */
+/* ============================================================================
+   Details panel (bottom)
+   ============================================================================ */
+
 .aam-details {
   border-top: 1px solid var(--aam-border);
   background: var(--aam-detail-bg);
