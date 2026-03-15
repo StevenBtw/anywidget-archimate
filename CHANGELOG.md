@@ -1,6 +1,29 @@
 # Changelog
 
-## 0.1.0
+## [0.1.1] - (2026-03-15)
+
+### New Features
+
+- **ArchiMate icons**: Standard SVG icons for all 13 element types (stick figure for BusinessActor, component tabs for ApplicationComponent, 3D box for Node, gear for BusinessFunction, etc.)
+- **Filter sidebar**: Collapsible left panel with per-layer, per-element-type, and per-relationship-type checkboxes with counts and "all / none" toggles
+- **Nest elements**: Composition and Aggregation relationships rendered as visual nesting with a toggle checkbox in the filter panel
+- **Archi native format**: Parser now supports both Open Exchange Format XML and Archi tool `.archimate` files
+
+### Improvements
+
+- **Guaranteed layer separation**: Per-layer independent layout ensures Business is always on top, Application in the middle, Technology at the bottom
+- **Left-to-right flow**: Within-layer dagre layout uses LR direction for natural process/flow reading order
+- **ArchiMate notation compliance**: Rounded corners for behavior elements (Process, Function, Service, Event), square corners for structure/passive elements
+- **Archi standard colors**: Application layer updated to cyan (`#B5FFFF`), hollow triangle marker for Realization and Specialization
+- **Orthogonal edge routing**: Cross-layer edges use V-H-V (vertical-horizontal-vertical) segments with right angles instead of diagonal lines
+- **Port distribution**: Multiple edges from the same node fan out across the node edge instead of bundling at center
+- **Jog offset**: Parallel horizontal edge segments are spaced apart to prevent overlap
+- **Barycenter optimization**: 3-pass iterative algorithm (top-down, bottom-up, top-down) repositions nodes to minimize total cross-layer edge length
+- **Disconnected node layout**: Orphaned elements arranged in horizontal rows instead of vertical stacking
+- **Dark mode default**: Dark theme enabled by default
+- **CI**: Added Python 3.14 to test matrix
+
+## [0.1.0] - (2026-03-15)
 
 ### New Features
 
