@@ -144,6 +144,20 @@
   border-bottom: none;
 }
 
+.aam-filter-nest-section {
+  padding: 6px 0;
+}
+
+.aam-filter-nest-toggle {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+/* Container (parent) nodes */
+.aam-container .aam-node-rect {
+  stroke-dasharray: 4 2;
+}
+
 .aam-filter-section-title {
   display: flex;
   align-items: center;

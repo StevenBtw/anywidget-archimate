@@ -119,9 +119,10 @@ function buildFilterPanel(model, onFilterChange) {
   const hiddenLayers = new Set();
   const hiddenElementTypes = new Set();
   const hiddenRelTypes = new Set();
+  let nestElements = true; // nesting enabled by default
 
   function emitChange() {
-    onFilterChange(hiddenLayers, hiddenElementTypes, hiddenRelTypes);
+    onFilterChange(hiddenLayers, hiddenElementTypes, hiddenRelTypes, nestElements);
   }
 
   function renderPanel() {
@@ -138,6 +139,27 @@ function buildFilterPanel(model, onFilterChange) {
 
     const content = document.createElement("div");
     content.className = "aam-filter-content";
+
+    // --- Nest elements toggle ---
+    const nestSection = document.createElement("div");
+    nestSection.className = "aam-filter-section aam-filter-nest-section";
+    const nestItem = document.createElement("label");
+    nestItem.className = "aam-filter-item aam-filter-nest-toggle";
+    const nestCheckbox = document.createElement("input");
+    nestCheckbox.type = "checkbox";
+    nestCheckbox.checked = nestElements;
+    nestCheckbox.className = "aam-filter-checkbox";
+    nestCheckbox.addEventListener("change", () => {
+      nestElements = nestCheckbox.checked;
+      emitChange();
+    });
+    nestItem.appendChild(nestCheckbox);
+    const nestLabel = document.createElement("span");
+    nestLabel.className = "aam-filter-name";
+    nestLabel.textContent = "Nest elements";
+    nestItem.appendChild(nestLabel);
+    nestSection.appendChild(nestItem);
+    content.appendChild(nestSection);
 
     // --- Layers section ---
     const layerSection = document.createElement("div");
@@ -362,24 +384,49 @@ const _LAYER_ANCHORS = {
   Technology:  "__anchor_technology",
 };
 
-function computeLayout(elements, relationships) {
+// Nesting relationship types (Composition & Aggregation → visual nesting)
+const NESTING_REL_TYPES = new Set(["Composition", "Aggregation"]);
+
+// Container padding for compound parent nodes
+const CONTAINER_PAD_TOP = 28;  // space for header
+const CONTAINER_PAD = 14;      // left/right/bottom padding
+
+function computeLayout(elements, relationships, nestElements) {
   const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setGraph({
     rankdir: "TB",
-    ranksep: 100,   // vertical space between ranks (layers)
-    nodesep: 50,    // horizontal space between nodes at same rank
-    edgesep: 25,    // minimum separation between edges
+    ranksep: 100,
+    nodesep: 50,
+    edgesep: 25,
     marginx: 50,
     marginy: 50,
-    acyclicer: "greedy",   // break cycles aggressively
-    ranker: "network-simplex",  // best ranker for layered graphs
+    acyclicer: "greedy",
+    ranker: "network-simplex",
   });
   g.setDefaultEdgeLabel(() => ({}));
 
   const elementIds = new Set(elements.map((e) => e.id));
+  const nestedEdgeIds = new Set();
 
-  // --- Layer enforcement via invisible anchor nodes ---
-  // Create tiny invisible anchor nodes for each layer present in the data
+  // --- Determine parent-child nesting ---
+  const childToParent = new Map();
+  const parentToChildren = new Map();
+  if (nestElements) {
+    for (const rel of relationships) {
+      if (!NESTING_REL_TYPES.has(rel.type)) continue;
+      if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
+      if (!childToParent.has(rel.target)) {
+        childToParent.set(rel.target, rel.source);
+        if (!parentToChildren.has(rel.source)) parentToChildren.set(rel.source, []);
+        parentToChildren.get(rel.source).push(rel.target);
+        nestedEdgeIds.add(rel.id);
+      }
+    }
+  }
+
+  const parentIds = new Set(parentToChildren.keys());
+
+  // --- Layer enforcement ---
   const presentLayers = [...new Set(elements.map((e) => e.layer))];
   const orderedLayers = LAYER_ORDER.filter((l) => presentLayers.includes(l));
 
@@ -388,49 +435,76 @@ function computeLayout(elements, relationships) {
       width: 1, height: 1, layer, _isAnchor: true,
     });
   }
-
-  // Chain anchor nodes top-to-bottom with high-weight edges to force rank order
   for (let i = 0; i < orderedLayers.length - 1; i++) {
     const upper = _LAYER_ANCHORS[orderedLayers[i]];
     const lower = _LAYER_ANCHORS[orderedLayers[i + 1]];
     g.setEdge(upper, lower, { weight: 200, minlen: 3 }, `__layerchain_${i}`);
   }
 
-  // Add real nodes
+  // --- Calculate container sizes for parent nodes ---
+  // Children are laid out in a grid inside the parent
+  const CHILD_COLS = 3; // max children per row
+  const CHILD_GAP = 10;
+
+  function containerSize(parentId) {
+    const children = parentToChildren.get(parentId) || [];
+    const cols = Math.min(children.length, CHILD_COLS);
+    const rows = Math.ceil(children.length / CHILD_COLS);
+    const w = cols * NODE_WIDTH + (cols - 1) * CHILD_GAP + CONTAINER_PAD * 2;
+    const h = rows * NODE_HEIGHT + (rows - 1) * CHILD_GAP + CONTAINER_PAD_TOP + CONTAINER_PAD;
+    return {
+      width: Math.max(w, NODE_WIDTH + CONTAINER_PAD * 2),
+      height: Math.max(h, NODE_HEIGHT + CONTAINER_PAD_TOP + CONTAINER_PAD),
+    };
+  }
+
+  // --- Add top-level nodes (parents and non-nested nodes) ---
   for (const el of elements) {
+    if (childToParent.has(el.id)) continue; // skip children, positioned manually later
+
+    const isParent = parentIds.has(el.id);
+    const size = isParent ? containerSize(el.id) : { width: NODE_WIDTH, height: NODE_HEIGHT };
+
     g.setNode(el.id, {
       label: el.name,
-      width: NODE_WIDTH,
-      height: NODE_HEIGHT,
+      width: size.width,
+      height: size.height,
       layer: el.layer,
+      _isParent: isParent,
     });
 
-    // Connect each node to its layer anchor (same-rank constraint)
     const anchor = _LAYER_ANCHORS[el.layer];
     if (anchor) {
       g.setEdge(anchor, el.id, { weight: 1, minlen: 0 }, `__rank_${el.id}`);
     }
   }
 
-  // Add real edges, normalizing direction so cross-layer edges flow top-to-bottom
+  // --- Add edges (skip nesting rels, skip edges involving hidden children) ---
   for (const rel of relationships) {
     if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
+    if (nestedEdgeIds.has(rel.id)) continue;
 
-    const srcEl = elements.find((e) => e.id === rel.source);
-    const tgtEl = elements.find((e) => e.id === rel.target);
+    // Map edges from/to children to their parent instead
+    let src = rel.source;
+    let tgt = rel.target;
+    if (childToParent.has(src)) src = childToParent.get(src);
+    if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+    if (src === tgt) continue; // internal edge within same container
+
+    const srcEl = elements.find((e) => e.id === src);
+    const tgtEl = elements.find((e) => e.id === tgt);
+    if (!srcEl || !tgtEl) continue;
     const srcRank = LAYER_RANK[srcEl.layer] ?? 3;
     const tgtRank = LAYER_RANK[tgtEl.layer] ?? 3;
 
     if (srcRank <= tgtRank) {
-      // Normal direction (top → bottom or same layer)
-      g.setEdge(rel.source, rel.target, {
+      g.setEdge(src, tgt, {
         relationship: rel,
         weight: 1,
         minlen: srcRank === tgtRank ? 1 : 2,
       }, rel.id);
     } else {
-      // Cross-layer edge going "upward" — reverse for dagre but mark as reversed
-      g.setEdge(rel.target, rel.source, {
+      g.setEdge(tgt, src, {
         relationship: { ...rel, _reversed: true },
         weight: 1,
         minlen: 2,
@@ -439,6 +513,36 @@ function computeLayout(elements, relationships) {
   }
 
   dagre.layout(g);
+
+  // --- Position children inside their parent containers ---
+  for (const [parentId, children] of parentToChildren) {
+    const parentNode = g.node(parentId);
+    if (!parentNode) continue;
+
+    const px = parentNode.x - parentNode.width / 2 + CONTAINER_PAD;
+    const py = parentNode.y - parentNode.height / 2 + CONTAINER_PAD_TOP;
+
+    children.forEach((childId, i) => {
+      const col = i % CHILD_COLS;
+      const row = Math.floor(i / CHILD_COLS);
+      const cx = px + col * (NODE_WIDTH + CHILD_GAP) + NODE_WIDTH / 2;
+      const cy = py + row * (NODE_HEIGHT + CHILD_GAP) + NODE_HEIGHT / 2;
+      const childEl = elements.find((e) => e.id === childId);
+
+      g.setNode(childId, {
+        x: cx, y: cy,
+        width: NODE_WIDTH, height: NODE_HEIGHT,
+        label: childEl ? childEl.name : childId,
+        layer: childEl ? childEl.layer : parentNode.layer,
+        _isChild: true,
+      });
+    });
+  }
+
+  // Store nesting info on the graph for rendering
+  g._parentIds = parentIds;
+  g._childToParent = childToParent;
+
   return g;
 }
 
@@ -454,7 +558,7 @@ function isAnchorEdge(edgeObj) {
 // Rendering
 // ============================================================================
 
-function renderDiagram(container, elements, relationships, darkMode) {
+function renderDiagram(container, elements, relationships, darkMode, nestElements) {
   container.innerHTML = "";
 
   if (!elements.length) {
@@ -462,7 +566,7 @@ function renderDiagram(container, elements, relationships, darkMode) {
     return;
   }
 
-  const g = computeLayout(elements, relationships);
+  const g = computeLayout(elements, relationships, nestElements);
   const graphInfo = g.graph();
   const svgWidth = graphInfo.width + 80;
   const svgHeight = graphInfo.height + 80;
@@ -481,22 +585,36 @@ function renderDiagram(container, elements, relationships, darkMode) {
 
   drawLayerBands(mainG, g, elements, svgWidth);
 
+  // Draw parent containers first (behind children)
+  const containersG = svgEl("g", { class: "aam-containers" });
+  mainG.appendChild(containersG);
+  for (const nodeId of g.nodes()) {
+    if (isAnchorNode(nodeId)) continue;
+    const nodeData = g.node(nodeId);
+    const el = elements.find((e) => e.id === nodeId);
+    if (el && nodeData && nodeData._isParent) {
+      drawContainerNode(containersG, nodeData, el, darkMode);
+    }
+  }
+
+  // Draw edges
   const edgesG = svgEl("g", { class: "aam-edges" });
   mainG.appendChild(edgesG);
   for (const e of g.edges()) {
-    // Skip invisible anchor edges
     if (isAnchorEdge(e)) continue;
     drawEdge(edgesG, g.edge(e), darkMode);
   }
 
+  // Draw leaf nodes (non-parent nodes)
   const nodesG = svgEl("g", { class: "aam-nodes" });
   mainG.appendChild(nodesG);
   for (const nodeId of g.nodes()) {
-    // Skip invisible anchor nodes
     if (isAnchorNode(nodeId)) continue;
     const nodeData = g.node(nodeId);
     const el = elements.find((e) => e.id === nodeId);
-    if (el && nodeData) drawNode(nodesG, nodeData, el, darkMode);
+    if (el && nodeData && !nodeData._isParent) {
+      drawNode(nodesG, nodeData, el, darkMode);
+    }
   }
 
   container.appendChild(svg);
@@ -581,6 +699,71 @@ function drawNode(parentG, nodeData, el, darkMode) {
   subtext.textContent = formatType(el.type);
   group.appendChild(subtext);
 
+  const title = svgEl("title");
+  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})\n${el.documentation || ""}`;
+  group.appendChild(title);
+
+  parentG.appendChild(group);
+}
+
+function drawContainerNode(parentG, nodeData, el, darkMode) {
+  const colors = LAYER_COLORS[el.layer] || LAYER_COLORS.Other;
+  const w = nodeData.width;
+  const h = nodeData.height;
+  const x = nodeData.x - w / 2;
+  const y = nodeData.y - h / 2;
+
+  const group = svgEl("g", {
+    class: "aam-node aam-container", "data-id": el.id,
+    transform: `translate(${x}, ${y})`,
+  });
+
+  // Container background
+  group.appendChild(svgEl("rect", {
+    width: w, height: h, rx: NODE_RX,
+    fill: colors.fill, stroke: colors.stroke, "stroke-width": "1.5",
+    opacity: "0.5", class: "aam-node-rect",
+  }));
+
+  // Header bar
+  group.appendChild(svgEl("rect", {
+    width: w, height: CONTAINER_PAD_TOP - 2, rx: NODE_RX,
+    fill: colors.stroke, opacity: "0.2",
+  }));
+  // Flat bottom corners on header (overlay rect)
+  group.appendChild(svgEl("rect", {
+    x: 0, y: NODE_RX,
+    width: w, height: CONTAINER_PAD_TOP - 2 - NODE_RX,
+    fill: colors.stroke, opacity: "0.2",
+  }));
+
+  // Container name
+  const text = svgEl("text", {
+    x: 8, y: CONTAINER_PAD_TOP / 2 + 1,
+    "dominant-baseline": "middle",
+    class: "aam-node-label", fill: colors.text,
+    "font-size": "11",
+  });
+  text.textContent = truncate(el.name, 30);
+  group.appendChild(text);
+
+  // Badge
+  const badge = getTypeBadge(el.type);
+  if (badge) {
+    const badgeG = svgEl("g", { transform: `translate(${w - 24}, 5)` });
+    badgeG.appendChild(svgEl("rect", {
+      width: 20, height: 14, rx: 2, fill: colors.stroke, opacity: "0.3",
+    }));
+    const badgeText = svgEl("text", {
+      x: 10, y: 11, "text-anchor": "middle", "font-size": "8",
+      fill: colors.text, "font-weight": "bold",
+    });
+    badgeText.textContent = badge;
+    badgeG.appendChild(badgeText);
+    group.appendChild(badgeG);
+  }
+
+  // Tooltip
   const title = svgEl("title");
   title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})\n${el.documentation || ""}`;
   group.appendChild(title);
@@ -735,12 +918,14 @@ function render({ model, el }) {
   let hiddenLayers = new Set();
   let hiddenElementTypes = new Set();
   let hiddenRelTypes = new Set();
+  let nestElements = true;
 
   // Filter sidebar
-  const filterPanel = buildFilterPanel(model, (layers, elemTypes, relTypes) => {
+  const filterPanel = buildFilterPanel(model, (layers, elemTypes, relTypes, nest) => {
     hiddenLayers = layers;
     hiddenElementTypes = elemTypes;
     hiddenRelTypes = relTypes;
+    nestElements = nest;
     rebuildDiagram();
   });
   filterPanel.element.classList.add("aam-panel-open"); // open by default
@@ -783,7 +968,7 @@ function render({ model, el }) {
     wrapper.classList.toggle("aam-dark", darkMode);
 
     const { elements, relationships } = getFilteredData();
-    renderDiagram(graphContainer, elements, relationships, darkMode);
+    renderDiagram(graphContainer, elements, relationships, darkMode, nestElements);
 
     // Attach click handlers to nodes
     const allElements = model.get("elements") || [];
