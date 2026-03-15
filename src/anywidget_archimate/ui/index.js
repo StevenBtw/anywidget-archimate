@@ -519,6 +519,143 @@ function computeLayout(elements, relationships, nestElements) {
     }
   }
 
+  // =====================================================================
+  // Barycenter + gravity optimization to reduce total edge length
+  // =====================================================================
+  // Collect all cross-layer edges (mapped to top-level nodes)
+  const crossEdges = [];
+  for (const rel of relationships) {
+    if (nestedEdgeIds.has(rel.id)) continue;
+    if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
+    let src = rel.source, tgt = rel.target;
+    if (childToParent.has(src)) src = childToParent.get(src);
+    if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+    if (src === tgt) continue;
+    const se = elemById.get(src), te = elemById.get(tgt);
+    if (!se || !te || se.layer === te.layer) continue;
+    crossEdges.push({ src, tgt });
+  }
+
+  // Build adjacency: nodeId → [ids in other layers it connects to]
+  const crossNeighbors = new Map();
+  for (const { src, tgt } of crossEdges) {
+    if (!crossNeighbors.has(src)) crossNeighbors.set(src, []);
+    if (!crossNeighbors.has(tgt)) crossNeighbors.set(tgt, []);
+    crossNeighbors.get(src).push(tgt);
+    crossNeighbors.get(tgt).push(src);
+  }
+
+  // Identify connected components within each layer (nodes linked by dagre edges)
+  function findComponents(layerEls, withinLayerEdges) {
+    const parent = new Map();
+    layerEls.forEach((e) => parent.set(e.id, e.id));
+    function find(x) { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; }
+    function union(a, b) { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); }
+    withinLayerEdges.forEach(({ src, tgt }) => { if (parent.has(src) && parent.has(tgt)) union(src, tgt); });
+    const groups = new Map();
+    layerEls.forEach((e) => {
+      const root = find(e.id);
+      if (!groups.has(root)) groups.set(root, []);
+      groups.get(root).push(e.id);
+    });
+    return [...groups.values()];
+  }
+
+  // Compute barycenter of a group of nodes (average x of their cross-layer neighbors)
+  function groupBarycenter(nodeIds) {
+    let sumX = 0, count = 0;
+    for (const id of nodeIds) {
+      const neighbors = crossNeighbors.get(id) || [];
+      for (const nid of neighbors) {
+        const np = nodePositions.get(nid);
+        if (np) { sumX += np.x; count++; }
+      }
+    }
+    return count > 0 ? sumX / count : null;
+  }
+
+  // Run 3 passes: top-down, bottom-up, top-down (iterative refinement)
+  for (let pass = 0; pass < 3; pass++) {
+    const layerOrder = pass % 2 === 0 ? orderedLayers : [...orderedLayers].reverse();
+
+    for (const layer of layerOrder) {
+      const layerEls = layerElements[layer];
+      if (!layerEls || layerEls.length === 0) continue;
+
+      // Rebuild within-layer edges for this layer
+      const layerIds = new Set(layerEls.map((e) => e.id));
+      const withinEdges = [];
+      for (const rel of relationships) {
+        if (nestedEdgeIds.has(rel.id)) continue;
+        let src = rel.source, tgt = rel.target;
+        if (childToParent.has(src)) src = childToParent.get(src);
+        if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+        if (src === tgt) continue;
+        if (layerIds.has(src) && layerIds.has(tgt)) withinEdges.push({ src, tgt });
+      }
+
+      // Find connected components
+      const components = findComponents(layerEls, withinEdges);
+
+      // For each component, compute its barycenter target and current center
+      const compInfos = components.map((ids) => {
+        const bc = groupBarycenter(ids);
+        let minX = Infinity, maxX = -Infinity;
+        for (const id of ids) {
+          const p = nodePositions.get(id);
+          if (p) { minX = Math.min(minX, p.x - p.width / 2); maxX = Math.max(maxX, p.x + p.width / 2); }
+        }
+        const centerX = (minX + maxX) / 2;
+        const width = maxX - minX;
+        return { ids, bc, centerX, width };
+      });
+
+      // Sort components by barycenter (components with cross-layer connections first)
+      compInfos.sort((a, b) => {
+        if (a.bc === null && b.bc === null) return 0;
+        if (a.bc === null) return 1;
+        if (b.bc === null) return -1;
+        return a.bc - b.bc;
+      });
+
+      // Reposition: place components left-to-right in barycenter order
+      // For components WITH a barycenter, shift toward it (gravity pull)
+      // For components WITHOUT, place them in remaining gaps
+      const gap = 30;
+      let cursor = LAYER_MARGIN;
+
+      for (const ci of compInfos) {
+        let targetX;
+        if (ci.bc !== null) {
+          // Gravity: pull toward barycenter, but don't overlap with cursor
+          targetX = Math.max(cursor + ci.width / 2, ci.bc);
+        } else {
+          targetX = cursor + ci.width / 2;
+        }
+
+        const shiftX = targetX - ci.centerX;
+        for (const id of ci.ids) {
+          const p = nodePositions.get(id);
+          if (p) p.x += shiftX;
+        }
+
+        // Update cursor past this component
+        let compMaxX = -Infinity;
+        for (const id of ci.ids) {
+          const p = nodePositions.get(id);
+          if (p) compMaxX = Math.max(compMaxX, p.x + p.width / 2);
+        }
+        cursor = compMaxX + gap;
+      }
+
+      // Update maxWidth
+      for (const el of layerEls) {
+        const p = nodePositions.get(el.id);
+        if (p) maxWidth = Math.max(maxWidth, p.x + p.width / 2 + LAYER_MARGIN);
+      }
+    }
+  }
+
   // --- Position children inside parents ---
   for (const [pid, children] of parentToChildren) {
     const pp = nodePositions.get(pid);
