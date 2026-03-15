@@ -1054,6 +1054,30 @@ function render({ model, el }) {
   wrapper.className = "aam-wrapper";
   el.appendChild(wrapper);
 
+  // Auto-detect host theme (marimo uses Tailwind class="dark" on <html>)
+  function detectHostDark() {
+    const html = document.documentElement;
+    if (html.classList.contains("dark")) return true;
+    if (html.dataset.theme === "dark") return true;
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
+    return false;
+  }
+
+  const hasHostTheme = !!el.getRootNode()?.host?.tagName?.startsWith("MARIMO-");
+  if (hasHostTheme) {
+    wrapper.classList.add("aam-auto-theme");
+    model.set("dark_mode", detectHostDark());
+    model.save_changes();
+    const themeObserver = new MutationObserver(() => {
+      const dark = detectHostDark();
+      if (model.get("dark_mode") !== dark) {
+        model.set("dark_mode", dark);
+        model.save_changes();
+      }
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
+  }
+
   const toolbar = document.createElement("div");
   toolbar.className = "aam-toolbar";
   toolbar.innerHTML = `
