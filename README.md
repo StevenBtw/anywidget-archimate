@@ -12,7 +12,7 @@ Supports all 8 ArchiMate relationship types with correct arrow notation.
 ## Install
 
 ```bash
-UV add anywidget-archimate
+uv add anywidget-archimate
 ```
 
 ## Usage
