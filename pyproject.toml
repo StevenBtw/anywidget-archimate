@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-archimate"
-version = "0.1.3"
+version = "0.1.4"
 description = "Interactive ArchiMate model viewer widget for Jupyter, Marimo, and VS Code notebooks"
 readme = "README.md"
 license = "Apache-2.0"
