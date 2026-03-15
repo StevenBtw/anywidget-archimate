@@ -36,6 +36,18 @@ class ArchiMate(anywidget.AnyWidget):
     # Interaction state
     selected_element = traitlets.Dict(allow_none=True, default_value=None).tag(sync=True)
 
+    # File upload (browser → Python)
+    _upload_xml = traitlets.Unicode(default_value="").tag(sync=True)
+
+    @traitlets.observe("_upload_xml")
+    def _on_upload_xml(self, change):
+        xml = change["new"]
+        if xml:
+            elements, relationships = parse_xml(xml)
+            self.elements = elements
+            self.relationships = relationships
+            self._upload_xml = ""  # reset
+
     @classmethod
     def from_xml(cls, source: str | Path, **kwargs) -> ArchiMate:
         """Create widget from ArchiMate XML file or string.

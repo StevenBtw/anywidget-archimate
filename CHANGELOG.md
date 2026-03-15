@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3] - (2026-03-15)
+
+### New Features
+
+- **Upload button**: Toolbar button to load `.xml` or `.archimate` files directly from the browser — no Python code needed to switch models
+- **Export to SVG**: Download the current diagram as a self-contained SVG file with inlined fonts
+- **Export to PNG**: Download the current diagram as a high-resolution (2x) PNG with correct light/dark background
+
 ## [0.1.2] - (2026-03-15)
 
 ### New Features
