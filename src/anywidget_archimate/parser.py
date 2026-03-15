@@ -63,12 +63,16 @@ def parse_xml(source: str | Path) -> tuple[list[dict], list[dict]]:
     Returns:
         Tuple of (elements, relationships) as lists of dicts.
     """
-    source_path = Path(source) if not isinstance(source, Path) else source
-    if source_path.exists():
-        tree = ET.parse(source_path)
-        root = tree.getroot()
+    source_str = str(source)
+    if not source_str.lstrip().startswith("<"):
+        source_path = Path(source) if not isinstance(source, Path) else source
+        if source_path.exists():
+            tree = ET.parse(source_path)
+            root = tree.getroot()
+        else:
+            root = ET.fromstring(source_str)
     else:
-        root = ET.fromstring(str(source))
+        root = ET.fromstring(source_str)
 
     ns = _detect_namespace(root)
 
