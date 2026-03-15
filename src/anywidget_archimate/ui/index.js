@@ -674,8 +674,17 @@ function computeLayout(elements, relationships, nestElements) {
     });
   }
 
-  // --- Build edges with orthogonal routing ---
-  const edgeList = [];
+  // --- Build edges with orthogonal routing + port distribution + jog offset ---
+
+  // First pass: collect all edges and count ports per node side
+  const edgeInfos = []; // { src, tgt, srcPos, tgtPos, srcLayer, tgtLayer, rel }
+  const srcBottomPorts = new Map(); // nodeId → count of edges leaving bottom
+  const srcTopPorts = new Map();    // nodeId → count of edges leaving top
+  const srcRightPorts = new Map();  // nodeId → count of edges leaving right
+  const tgtTopPorts = new Map();    // nodeId → count of edges entering top
+  const tgtBottomPorts = new Map(); // nodeId → count of edges entering bottom
+  const tgtLeftPorts = new Map();   // nodeId → count of edges entering left
+
   for (const rel of relationships) {
     if (nestedEdgeIds.has(rel.id)) continue;
     if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
@@ -691,35 +700,119 @@ function computeLayout(elements, relationships, nestElements) {
     if (!se || !te) continue;
     const sL = LAYER_RANK[se.layer] ?? 3, tL = LAYER_RANK[te.layer] ?? 3;
 
-    let points;
+    edgeInfos.push({ src, tgt, sp, tp, sL, tL, rel });
+
+    // Count ports per side
     if (sL === tL) {
-      // Same layer: horizontal routing (dagre handles this via within-layer edges)
-      // Simple: right side of source → left side of target, with a jog if needed
-      const sy = sp.y, ty = tp.y;
-      const sx = sp.x + sp.width / 2, tx = tp.x - tp.width / 2;
+      // Same layer: right→left
+      srcRightPorts.set(src, (srcRightPorts.get(src) || 0) + 1);
+      tgtLeftPorts.set(tgt, (tgtLeftPorts.get(tgt) || 0) + 1);
+    } else if (sL < tL) {
+      // Source above target: bottom→top
+      srcBottomPorts.set(src, (srcBottomPorts.get(src) || 0) + 1);
+      tgtTopPorts.set(tgt, (tgtTopPorts.get(tgt) || 0) + 1);
+    } else {
+      // Source below target: top→bottom
+      srcTopPorts.set(src, (srcTopPorts.get(src) || 0) + 1);
+      tgtBottomPorts.set(tgt, (tgtBottomPorts.get(tgt) || 0) + 1);
+    }
+  }
+
+  // Port index counters (reset per node per side)
+  const srcBottomIdx = new Map();
+  const srcTopIdx = new Map();
+  const srcRightIdx = new Map();
+  const tgtTopIdx = new Map();
+  const tgtBottomIdx = new Map();
+  const tgtLeftIdx = new Map();
+
+  function getPortX(nodePos, portMap, idxMap, nodeId) {
+    const total = portMap.get(nodeId) || 1;
+    const idx = (idxMap.get(nodeId) || 0);
+    idxMap.set(nodeId, idx + 1);
+    // Distribute ports across 70% of node width, centered
+    const span = nodePos.width * 0.7;
+    const start = nodePos.x - span / 2;
+    if (total === 1) return nodePos.x;
+    return start + (idx / (total - 1)) * span;
+  }
+
+  function getPortY(nodePos, portMap, idxMap, nodeId) {
+    const total = portMap.get(nodeId) || 1;
+    const idx = (idxMap.get(nodeId) || 0);
+    idxMap.set(nodeId, idx + 1);
+    const span = nodePos.height * 0.6;
+    const start = nodePos.y - span / 2;
+    if (total === 1) return nodePos.y;
+    return start + (idx / (total - 1)) * span;
+  }
+
+  // Sort edges by target x-position to assign ports left-to-right (reduces crossings)
+  edgeInfos.sort((a, b) => {
+    if (a.sL === a.tL && b.sL === b.tL) return a.tp.x - b.tp.x;
+    if (a.sL !== a.tL && b.sL !== b.tL) return a.tp.x - b.tp.x;
+    return 0;
+  });
+
+  // Second pass: build edge paths with distributed ports + offset jogs
+  const edgeList = [];
+  const JOG_SPREAD = 8; // pixels between parallel horizontal jog segments
+  let jogCounter = 0;
+
+  for (const { src, tgt, sp, tp, sL, tL, rel } of edgeInfos) {
+    let points;
+
+    if (sL === tL) {
+      // Same layer: right side of source → left side of target
+      const sx = sp.x + sp.width / 2;
+      const tx = tp.x - tp.width / 2;
+      const sy = getPortY(sp, srcRightPorts, srcRightIdx, src);
+      const ty = getPortY(tp, tgtLeftPorts, tgtLeftIdx, tgt);
       if (Math.abs(sy - ty) < 5) {
         points = [{ x: sx, y: sy }, { x: tx, y: ty }];
       } else {
-        const midX = (sx + tx) / 2;
+        const midX = (sx + tx) / 2 + (jogCounter++ % 5 - 2) * JOG_SPREAD;
         points = [{ x: sx, y: sy }, { x: midX, y: sy }, { x: midX, y: ty }, { x: tx, y: ty }];
       }
-    } else {
-      // Cross-layer: orthogonal V-H-V routing
-      const goDown = sL < tL;
-      const srcY = goDown ? sp.y + sp.height / 2 : sp.y - sp.height / 2;
-      const tgtY = goDown ? tp.y - tp.height / 2 : tp.y + tp.height / 2;
-      const midY = (srcY + tgtY) / 2;
+    } else if (sL < tL) {
+      // Source above target: exit bottom, enter top
+      const srcX = getPortX(sp, srcBottomPorts, srcBottomIdx, src);
+      const tgtX = getPortX(tp, tgtTopPorts, tgtTopIdx, tgt);
+      const srcY = sp.y + sp.height / 2;
+      const tgtY = tp.y - tp.height / 2;
 
-      if (Math.abs(sp.x - tp.x) < 5) {
-        // Vertically aligned: straight down
-        points = [{ x: sp.x, y: srcY }, { x: tp.x, y: tgtY }];
+      if (Math.abs(srcX - tgtX) < 5) {
+        points = [{ x: srcX, y: srcY }, { x: tgtX, y: tgtY }];
       } else {
-        // V-H-V: go down, jog horizontally, go down to target
+        // V-H-V with offset jog
+        const baseMidY = (srcY + tgtY) / 2;
+        const jogOffset = (jogCounter++ % 7 - 3) * JOG_SPREAD;
+        const midY = baseMidY + jogOffset;
         points = [
-          { x: sp.x, y: srcY },
-          { x: sp.x, y: midY },
-          { x: tp.x, y: midY },
-          { x: tp.x, y: tgtY },
+          { x: srcX, y: srcY },
+          { x: srcX, y: midY },
+          { x: tgtX, y: midY },
+          { x: tgtX, y: tgtY },
+        ];
+      }
+    } else {
+      // Source below target: exit top, enter bottom
+      const srcX = getPortX(sp, srcTopPorts, srcTopIdx, src);
+      const tgtX = getPortX(tp, tgtBottomPorts, tgtBottomIdx, tgt);
+      const srcY = sp.y - sp.height / 2;
+      const tgtY = tp.y + tp.height / 2;
+
+      if (Math.abs(srcX - tgtX) < 5) {
+        points = [{ x: srcX, y: srcY }, { x: tgtX, y: tgtY }];
+      } else {
+        const baseMidY = (srcY + tgtY) / 2;
+        const jogOffset = (jogCounter++ % 7 - 3) * JOG_SPREAD;
+        const midY = baseMidY + jogOffset;
+        points = [
+          { x: srcX, y: srcY },
+          { x: srcX, y: midY },
+          { x: tgtX, y: midY },
+          { x: tgtX, y: tgtY },
         ];
       }
     }
