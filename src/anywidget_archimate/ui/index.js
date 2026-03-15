@@ -376,39 +376,33 @@ function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHi
 // Layout
 // ============================================================================
 
-// Prefix for invisible infrastructure nodes/edges
-const _ANCHOR = "__anchor_";
-const _LAYER_ANCHORS = {
-  Business:    "__anchor_business",
-  Application: "__anchor_application",
-  Technology:  "__anchor_technology",
-};
-
 // Nesting relationship types (Composition & Aggregation → visual nesting)
 const NESTING_REL_TYPES = new Set(["Composition", "Aggregation"]);
 
 // Container padding for compound parent nodes
-const CONTAINER_PAD_TOP = 28;  // space for header
-const CONTAINER_PAD = 14;      // left/right/bottom padding
+const CONTAINER_PAD_TOP = 28;
+const CONTAINER_PAD = 14;
+const CHILD_COLS = 3;
+const CHILD_GAP = 10;
+const LAYER_GAP = 60; // vertical gap between layer bands
+const LAYER_MARGIN = 50;
 
+/**
+ * Per-layer layout: runs dagre independently for each layer, then stacks
+ * them vertically. This guarantees Business is on top, Application in the
+ * middle, and Technology at the bottom — no exceptions.
+ *
+ * Returns a result object (not a dagre graph) with:
+ *   nodes: Map<id, { x, y, width, height, layer, _isParent, _isChild }>
+ *   edges: [{ points, relationship }]
+ *   width, height: total diagram size
+ */
 function computeLayout(elements, relationships, nestElements) {
-  const g = new dagre.graphlib.Graph({ multigraph: true });
-  g.setGraph({
-    rankdir: "TB",
-    ranksep: 100,
-    nodesep: 50,
-    edgesep: 25,
-    marginx: 50,
-    marginy: 50,
-    acyclicer: "greedy",
-    ranker: "network-simplex",
-  });
-  g.setDefaultEdgeLabel(() => ({}));
-
   const elementIds = new Set(elements.map((e) => e.id));
-  const nestedEdgeIds = new Set();
+  const elemById = new Map(elements.map((e) => [e.id, e]));
 
-  // --- Determine parent-child nesting ---
+  // --- Nesting ---
+  const nestedEdgeIds = new Set();
   const childToParent = new Map();
   const parentToChildren = new Map();
   if (nestElements) {
@@ -423,29 +417,9 @@ function computeLayout(elements, relationships, nestElements) {
       }
     }
   }
-
   const parentIds = new Set(parentToChildren.keys());
 
-  // --- Layer enforcement ---
-  const presentLayers = [...new Set(elements.map((e) => e.layer))];
-  const orderedLayers = LAYER_ORDER.filter((l) => presentLayers.includes(l));
-
-  for (const layer of orderedLayers) {
-    g.setNode(_LAYER_ANCHORS[layer], {
-      width: 1, height: 1, layer, _isAnchor: true,
-    });
-  }
-  for (let i = 0; i < orderedLayers.length - 1; i++) {
-    const upper = _LAYER_ANCHORS[orderedLayers[i]];
-    const lower = _LAYER_ANCHORS[orderedLayers[i + 1]];
-    g.setEdge(upper, lower, { weight: 200, minlen: 3 }, `__layerchain_${i}`);
-  }
-
-  // --- Calculate container sizes for parent nodes ---
-  // Children are laid out in a grid inside the parent
-  const CHILD_COLS = 3; // max children per row
-  const CHILD_GAP = 10;
-
+  // --- Container sizing ---
   function containerSize(parentId) {
     const children = parentToChildren.get(parentId) || [];
     const cols = Math.min(children.length, CHILD_COLS);
@@ -458,100 +432,178 @@ function computeLayout(elements, relationships, nestElements) {
     };
   }
 
-  // --- Add top-level nodes (parents and non-nested nodes) ---
+  // --- Group top-level elements by layer ---
+  const layerElements = {};
   for (const el of elements) {
-    if (childToParent.has(el.id)) continue; // skip children, positioned manually later
+    if (childToParent.has(el.id)) continue; // children positioned inside parent
+    if (!layerElements[el.layer]) layerElements[el.layer] = [];
+    layerElements[el.layer].push(el);
+  }
 
-    const isParent = parentIds.has(el.id);
-    const size = isParent ? containerSize(el.id) : { width: NODE_WIDTH, height: NODE_HEIGHT };
+  // --- Run dagre per layer ---
+  const nodePositions = new Map(); // id → { x, y, width, height, layer, ... }
+  let currentY = LAYER_MARGIN;
+  let maxWidth = 0;
+  const layerBounds = {}; // layer → { y, height }
+  const orderedLayers = LAYER_ORDER.filter((l) => layerElements[l] && layerElements[l].length > 0);
 
-    g.setNode(el.id, {
-      label: el.name,
-      width: size.width,
-      height: size.height,
-      layer: el.layer,
-      _isParent: isParent,
+  for (const layer of orderedLayers) {
+    const layerEls = layerElements[layer];
+    const layerIds = new Set(layerEls.map((e) => e.id));
+
+    const g = new dagre.graphlib.Graph({ multigraph: true });
+    g.setGraph({
+      rankdir: "TB",
+      ranksep: 60,
+      nodesep: 40,
+      edgesep: 20,
+      marginx: 30,
+      marginy: 20,
     });
+    g.setDefaultEdgeLabel(() => ({}));
 
-    const anchor = _LAYER_ANCHORS[el.layer];
-    if (anchor) {
-      g.setEdge(anchor, el.id, { weight: 1, minlen: 0 }, `__rank_${el.id}`);
+    // Add nodes for this layer
+    for (const el of layerEls) {
+      const isParent = parentIds.has(el.id);
+      const size = isParent ? containerSize(el.id) : { width: NODE_WIDTH, height: NODE_HEIGHT };
+      g.setNode(el.id, { label: el.name, width: size.width, height: size.height });
+    }
+
+    // Add within-layer edges only
+    for (const rel of relationships) {
+      if (nestedEdgeIds.has(rel.id)) continue;
+      let src = rel.source;
+      let tgt = rel.target;
+      if (childToParent.has(src)) src = childToParent.get(src);
+      if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+      if (src === tgt) continue;
+      if (layerIds.has(src) && layerIds.has(tgt)) {
+        g.setEdge(src, tgt, { relationship: rel }, rel.id);
+      }
+    }
+
+    dagre.layout(g);
+
+    const gInfo = g.graph();
+    const layerH = gInfo.height || 0;
+    const layerW = gInfo.width || 0;
+
+    // Store positions with y-offset
+    for (const nodeId of g.nodes()) {
+      const nd = g.node(nodeId);
+      const isParent = parentIds.has(nodeId);
+      nodePositions.set(nodeId, {
+        x: nd.x, y: nd.y + currentY,
+        width: nd.width, height: nd.height,
+        layer, _isParent: isParent,
+      });
+    }
+
+    layerBounds[layer] = { y: currentY, height: layerH };
+    maxWidth = Math.max(maxWidth, layerW);
+    currentY += layerH + LAYER_GAP;
+  }
+
+  // --- Center all layers to the same width ---
+  for (const layer of orderedLayers) {
+    const layerEls = layerElements[layer];
+    // Find this layer's actual width
+    let minX = Infinity, maxX = -Infinity;
+    for (const el of layerEls) {
+      const pos = nodePositions.get(el.id);
+      if (pos) {
+        minX = Math.min(minX, pos.x - pos.width / 2);
+        maxX = Math.max(maxX, pos.x + pos.width / 2);
+      }
+    }
+    const layerW = maxX - minX;
+    const offsetX = (maxWidth - layerW) / 2 - minX + LAYER_MARGIN;
+    for (const el of layerEls) {
+      const pos = nodePositions.get(el.id);
+      if (pos) pos.x += offsetX;
     }
   }
 
-  // --- Add edges (skip nesting rels, skip edges involving hidden children) ---
-  for (const rel of relationships) {
-    if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
-    if (nestedEdgeIds.has(rel.id)) continue;
-
-    // Map edges from/to children to their parent instead
-    let src = rel.source;
-    let tgt = rel.target;
-    if (childToParent.has(src)) src = childToParent.get(src);
-    if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
-    if (src === tgt) continue; // internal edge within same container
-
-    const srcEl = elements.find((e) => e.id === src);
-    const tgtEl = elements.find((e) => e.id === tgt);
-    if (!srcEl || !tgtEl) continue;
-    const srcRank = LAYER_RANK[srcEl.layer] ?? 3;
-    const tgtRank = LAYER_RANK[tgtEl.layer] ?? 3;
-
-    if (srcRank <= tgtRank) {
-      g.setEdge(src, tgt, {
-        relationship: rel,
-        weight: 1,
-        minlen: srcRank === tgtRank ? 1 : 2,
-      }, rel.id);
-    } else {
-      g.setEdge(tgt, src, {
-        relationship: { ...rel, _reversed: true },
-        weight: 1,
-        minlen: 2,
-      }, rel.id);
-    }
-  }
-
-  dagre.layout(g);
-
-  // --- Position children inside their parent containers ---
+  // --- Position children inside parents ---
   for (const [parentId, children] of parentToChildren) {
-    const parentNode = g.node(parentId);
-    if (!parentNode) continue;
-
-    const px = parentNode.x - parentNode.width / 2 + CONTAINER_PAD;
-    const py = parentNode.y - parentNode.height / 2 + CONTAINER_PAD_TOP;
+    const pPos = nodePositions.get(parentId);
+    if (!pPos) continue;
+    const px = pPos.x - pPos.width / 2 + CONTAINER_PAD;
+    const py = pPos.y - pPos.height / 2 + CONTAINER_PAD_TOP;
 
     children.forEach((childId, i) => {
       const col = i % CHILD_COLS;
       const row = Math.floor(i / CHILD_COLS);
-      const cx = px + col * (NODE_WIDTH + CHILD_GAP) + NODE_WIDTH / 2;
-      const cy = py + row * (NODE_HEIGHT + CHILD_GAP) + NODE_HEIGHT / 2;
-      const childEl = elements.find((e) => e.id === childId);
-
-      g.setNode(childId, {
-        x: cx, y: cy,
+      const childEl = elemById.get(childId);
+      nodePositions.set(childId, {
+        x: px + col * (NODE_WIDTH + CHILD_GAP) + NODE_WIDTH / 2,
+        y: py + row * (NODE_HEIGHT + CHILD_GAP) + NODE_HEIGHT / 2,
         width: NODE_WIDTH, height: NODE_HEIGHT,
-        label: childEl ? childEl.name : childId,
-        layer: childEl ? childEl.layer : parentNode.layer,
+        layer: childEl ? childEl.layer : pPos.layer,
         _isChild: true,
       });
     });
   }
 
-  // Store nesting info on the graph for rendering
-  g._parentIds = parentIds;
-  g._childToParent = childToParent;
+  // --- Build cross-layer edges as simple straight lines between node centers ---
+  const edgeList = [];
+  for (const rel of relationships) {
+    if (nestedEdgeIds.has(rel.id)) continue;
+    if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
 
-  return g;
-}
+    let src = rel.source;
+    let tgt = rel.target;
+    if (childToParent.has(src)) src = childToParent.get(src);
+    if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+    if (src === tgt) continue;
 
-function isAnchorNode(nodeId) {
-  return nodeId.startsWith(_ANCHOR);
-}
+    const srcPos = nodePositions.get(src);
+    const tgtPos = nodePositions.get(tgt);
+    if (!srcPos || !tgtPos) continue;
 
-function isAnchorEdge(edgeObj) {
-  return edgeObj.v.startsWith(_ANCHOR) || edgeObj.w.startsWith(_ANCHOR);
+    // Connect from bottom of source to top of target (or reverse)
+    const srcEl = elemById.get(src);
+    const tgtEl = elemById.get(tgt);
+    if (!srcEl || !tgtEl) continue;
+    const srcLayer = LAYER_RANK[srcEl.layer] ?? 3;
+    const tgtLayer = LAYER_RANK[tgtEl.layer] ?? 3;
+
+    let points;
+    if (srcLayer === tgtLayer) {
+      // Same layer: use dagre's edge points if available, else straight line
+      points = [
+        { x: srcPos.x, y: srcPos.y },
+        { x: tgtPos.x, y: tgtPos.y },
+      ];
+    } else if (srcLayer < tgtLayer) {
+      // Source above target: connect bottom of source to top of target
+      points = [
+        { x: srcPos.x, y: srcPos.y + srcPos.height / 2 },
+        { x: tgtPos.x, y: tgtPos.y - tgtPos.height / 2 },
+      ];
+    } else {
+      // Source below target: reversed for arrow direction
+      points = [
+        { x: tgtPos.x, y: tgtPos.y + tgtPos.height / 2 },
+        { x: srcPos.x, y: srcPos.y - srcPos.height / 2 },
+      ];
+    }
+
+    edgeList.push({ points, relationship: rel });
+  }
+
+  const totalW = maxWidth + LAYER_MARGIN * 2;
+  const totalH = currentY - LAYER_GAP + LAYER_MARGIN;
+
+  return {
+    nodes: nodePositions,
+    edges: edgeList,
+    layerBounds,
+    parentIds,
+    childToParent,
+    width: totalW,
+    height: totalH,
+  };
 }
 
 // ============================================================================
