@@ -399,7 +399,4 @@
   font-size: 12px;
 }
 
-/* Hide dark mode button when host provides theme */
-.aam-wrapper.aam-auto-theme .aam-btn-dark {
-  display: none;
-}
+/* Dark mode toggle always visible — manual toggle disables auto-theme */
