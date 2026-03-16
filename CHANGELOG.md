@@ -1,10 +1,23 @@
 # Changelog
 
+## [0.2.0] - (2026-03-16)
+
+### Fixes
+
+- **Theme detection**: Fixed auto-theme not responding to host theme changes: removed narrow Marimo shadow DOM gate so the MutationObserver is always active
+- **Marimo `dark-theme` class**: Added detection for Marimo 0.20.x `dark-theme` CSS class in addition to Tailwind `dark`
+
+### Improvements
+
+- **Universal theme observer**: Theme auto-detection now works in any host (Marimo, Jupyter, VS Code), observing both `<html>` and `<body>` for class/data-theme changes
+- **OS-level theme listener**: Added `prefers-color-scheme` media query change listener for OS dark/light mode switches
+- **Dark mode toggle always visible**: Manual toggle no longer hidden in auto-theme mode; clicking it disables auto-theme so the user's choice is respected
+
 ## [0.1.4] - (2026-03-16)
 
 ### New Features
 
-- **Automatic theme detection**: Auto-detects host dark mode (marimo Tailwind `class="dark"`, `data-theme`, or `prefers-color-scheme`) and syncs the widget theme automatically — dark mode toggle is hidden when the host controls the theme
+- **Automatic theme detection**: Auto-detects host dark mode (marimo Tailwind `class="dark"`, `data-theme` or `prefers-color-scheme`) and syncs the widget theme automatically; dark mode toggle is hidden when the host controls the theme
 
 ### Improvements
 
@@ -14,7 +27,7 @@
 
 ### New Features
 
-- **Upload button**: Toolbar button to load `.xml` or `.archimate` files directly from the browser — no Python code needed to switch models
+- **Upload button**: Toolbar button to load `.xml` or `.archimate` files directly from the browser; no Python code needed to switch models
 - **Export to SVG**: Download the current diagram as a self-contained SVG file with inlined fonts
 - **Export to PNG**: Download the current diagram as a high-resolution (2x) PNG with correct light/dark background
 
@@ -22,14 +35,14 @@
 
 ### New Features
 
-- **Demo module**: Built-in `demo_archimate()` function that creates a pre-populated ArchiMate widget with a sample enterprise architecture model (12 elements across Business, Application, and Technology layers) — no external files needed
+- **Demo module**: Built-in `demo_archimate()` function that creates a pre-populated ArchiMate widget with a sample enterprise architecture model (12 elements across Business, Application and Technology layers); no external files needed
 
 ## [0.1.1] - (2026-03-15)
 
 ### New Features
 
 - **ArchiMate icons**: Standard SVG icons for all 13 element types (stick figure for BusinessActor, component tabs for ApplicationComponent, 3D box for Node, gear for BusinessFunction, etc.)
-- **Filter sidebar**: Collapsible left panel with per-layer, per-element-type, and per-relationship-type checkboxes with counts and "all / none" toggles
+- **Filter sidebar**: Collapsible left panel with per-layer, per-element-type and per-relationship-type checkboxes with counts and "all / none" toggles
 - **Nest elements**: Composition and Aggregation relationships rendered as visual nesting with a toggle checkbox in the filter panel
 - **Archi native format**: Parser now supports both Open Exchange Format XML and Archi tool `.archimate` files
 
@@ -59,6 +72,6 @@
 - **Element badges**: Two-letter type badges (AC, BA, TS, etc.) on each element
 - **Zoom and pan**: Mouse wheel zoom and drag-to-pan on the SVG diagram
 - **Dark mode**: Toggle between light and dark themes
-- **Details panel**: Click any element to see its name, type, layer, and documentation
-- **anywidget integration**: Works in Jupyter, Marimo, and VS Code notebooks
+- **Details panel**: Click any element to see its name, type, layer and documentation
+- **anywidget integration**: Works in Jupyter, Marimo and VS Code notebooks
 - **`from_xml` / `load_xml`**: Load ArchiMate models from file path or XML string

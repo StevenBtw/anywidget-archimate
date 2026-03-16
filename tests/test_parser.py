@@ -59,9 +59,19 @@ def test_parse_xml_from_file():
 
 def test_layer_map_covers_all_types():
     expected_types = {
-        "ApplicationComponent", "ApplicationInterface", "ApplicationService", "DataObject",
-        "BusinessActor", "BusinessProcess", "BusinessFunction", "BusinessEvent", "BusinessObject",
-        "Node", "Device", "SystemSoftware", "TechnologyService",
+        "ApplicationComponent",
+        "ApplicationInterface",
+        "ApplicationService",
+        "DataObject",
+        "BusinessActor",
+        "BusinessProcess",
+        "BusinessFunction",
+        "BusinessEvent",
+        "BusinessObject",
+        "Node",
+        "Device",
+        "SystemSoftware",
+        "TechnologyService",
     }
     assert set(LAYER_MAP.keys()) == expected_types
 

@@ -1054,28 +1054,45 @@ function render({ model, el }) {
   wrapper.className = "aam-wrapper";
   el.appendChild(wrapper);
 
-  // Auto-detect host theme (marimo uses Tailwind class="dark" on <html>)
+  // Auto-detect host theme (Tailwind dark/dark-theme class, data-theme, or prefers-color-scheme)
   function detectHostDark() {
     const html = document.documentElement;
-    if (html.classList.contains("dark")) return true;
+    if (html.classList.contains("dark") || html.classList.contains("dark-theme")) return true;
     if (html.dataset.theme === "dark") return true;
+    if (document.body?.classList.contains("dark") || document.body?.classList.contains("dark-theme")) return true;
+    if (document.body?.dataset.theme === "dark") return true;
     if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
     return false;
   }
 
-  const hasHostTheme = !!el.getRootNode()?.host?.tagName?.startsWith("MARIMO-");
-  if (hasHostTheme) {
-    wrapper.classList.add("aam-auto-theme");
-    model.set("dark_mode", detectHostDark());
-    model.save_changes();
-    const themeObserver = new MutationObserver(() => {
+  // Always auto-detect and observe theme changes
+  let autoTheme = true;
+  model.set("dark_mode", detectHostDark());
+  model.save_changes();
+
+  const themeObserver = new MutationObserver(() => {
+    if (!autoTheme) return;
+    const dark = detectHostDark();
+    if (model.get("dark_mode") !== dark) {
+      model.set("dark_mode", dark);
+      model.save_changes();
+    }
+  });
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+  if (document.body) {
+    themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+  }
+
+  // Also listen for OS-level theme changes
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (!autoTheme) return;
       const dark = detectHostDark();
       if (model.get("dark_mode") !== dark) {
         model.set("dark_mode", dark);
         model.save_changes();
       }
     });
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
   }
 
   const toolbar = document.createElement("div");
@@ -1146,7 +1163,7 @@ function render({ model, el }) {
     const s = graphContainer.querySelector("svg");
     if (s) { const v = s.getAttribute("viewBox").split(" ").map(Number); s.setAttribute("viewBox", v.join(" ")); }
   });
-  toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
+  toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { autoTheme = false; model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
 
   // Upload
   const fileInput = toolbar.querySelector(".aam-file-input");
