@@ -10,8 +10,8 @@ Renders ArchiMate 3.0 Open Exchange Format XML with layered layout:
 Supports all 8 ArchiMate relationship types with correct arrow notation.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/demo-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="assets/demo-light.png">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/archimate-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/archimate-light.png">
   <img alt="anywidget-archimate demo" src="assets/demo-light.png">
 </picture>
 
