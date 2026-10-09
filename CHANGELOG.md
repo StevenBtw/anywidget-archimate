@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0] - (2026-10-09)
+
+### New Features
+
+- **Comparison styling**: Elements and relationships accept an optional `status` for showing several runs of one model: `partial` is dashed and faded, `changed` has an amber tint, `only_a` red, `only_b` green, and `ghost` is very faint and dashed; `stable` or no status draws as before
+- **Element badges**: An optional `badge` on an element (for example "2/3" or "only in run 1") is drawn in its top left corner and added to its tooltip; long text is cut to 26 characters
+- **Host-driven selection**: Setting `selected_element` from Python or the host (a dict with at least `id`) outlines that element; clicking an element still sets it from the browser
+- **Highlights**: New `highlight_ids` trait (a list of element ids) outlines several elements at once, for example all elements behind one difference
+
+### Improvements
+
+- **No network requests**: dagre 0.8.5 (MIT) is bundled with the widget instead of loaded from esm.sh, so the widget works offline and under a strict Content Security Policy, and the first render no longer waits on a CDN
+- **JavaScript tests**: Node tests for the comparison, badge, theme and highlight helpers, plus a check that the assembled module loads offline; pytest runs them when Node.js is installed
+
+### Fixes
+
+- **Explicit host theme wins**: A `data-theme` attribute on the closest ancestor (then `<html>`, then `<body>`) now takes precedence over a `dark` class and over `prefers-color-scheme`, so `data-theme="light"` renders light even when the operating system is dark
+
 ## [0.2.0] - (2026-03-16)
 
 ### Fixes

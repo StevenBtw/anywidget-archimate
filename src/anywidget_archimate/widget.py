@@ -33,8 +33,10 @@ class ArchiMate(anywidget.AnyWidget):
     height = traitlets.Int(default_value=700).tag(sync=True)
     dark_mode = traitlets.Bool(default_value=True).tag(sync=True)
 
-    # Interaction state
+    # Interaction state (the host may set selected_element by id to outline that element)
     selected_element = traitlets.Dict(allow_none=True, default_value=None).tag(sync=True)
+    # Element ids the host wants outlined (for example all elements behind one difference)
+    highlight_ids = traitlets.List(trait=traitlets.Unicode()).tag(sync=True)
 
     # File upload (browser → Python)
     _upload_xml = traitlets.Unicode(default_value="").tag(sync=True)

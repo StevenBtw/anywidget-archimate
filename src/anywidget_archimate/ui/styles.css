@@ -400,3 +400,22 @@
 }
 
 /* Dark mode toggle always visible — manual toggle disables auto-theme */
+
+/* Comparison status (several runs of one model): set per element or relationship as `status` */
+.aam-node.aam-status-partial { opacity: 0.75; }
+.aam-node.aam-status-partial .aam-node-rect { stroke-dasharray: 5 3; }
+.aam-node.aam-status-changed .aam-node-rect { fill: #ffd98a; }
+.aam-node.aam-status-only-a .aam-node-rect { fill: #ffb8b2; }
+.aam-node.aam-status-only-b .aam-node-rect { fill: #bdf0c8; }
+.aam-node.aam-status-ghost { opacity: 0.28; }
+.aam-node.aam-status-ghost .aam-node-rect { stroke-dasharray: 4 3; }
+.aam-edge.aam-status-partial,
+.aam-edge.aam-status-changed,
+.aam-edge.aam-status-ghost { stroke-dasharray: 4 3; opacity: 0.6; }
+.aam-edge.aam-status-only-a { stroke: #d1453b; }
+.aam-edge.aam-status-only-b { stroke: #2e9b4f; }
+.aam-node-badge { font: 600 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; opacity: 0.85; }
+
+/* Selection (clicked or set by the host) and host highlights */
+.aam-node.aam-selected .aam-node-rect { stroke: #2f81f7; stroke-width: 3; }
+.aam-node.aam-highlight .aam-node-rect { stroke: #e3a33b; stroke-width: 3; }

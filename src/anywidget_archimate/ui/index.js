@@ -898,7 +898,7 @@ function drawNode(parentG, nd, el, darkMode) {
   const x = nd.x - NODE_WIDTH / 2, y = nd.y - NODE_HEIGHT / 2;
   const rx = nodeRx(el.type);
 
-  const group = svgEl("g", { class: "aam-node", "data-id": el.id, transform: `translate(${x}, ${y})` });
+  const group = svgEl("g", { class: `aam-node ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
 
   group.appendChild(svgEl("rect", {
     width: NODE_WIDTH, height: NODE_HEIGHT, rx,
@@ -930,8 +930,15 @@ function drawNode(parentG, nd, el, darkMode) {
   sub.textContent = formatType(el.type);
   group.appendChild(sub);
 
+  const badge = badgeText(el);
+  if (badge) {
+    const b = svgEl("text", { x: 6, y: 10, class: "aam-node-badge", fill: c.text });
+    b.textContent = badge;
+    group.appendChild(b);
+  }
+
   const title = svgEl("title");
-  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})\n${el.documentation || ""}`;
+  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})${badge ? "\n" + badge : ""}\n${el.documentation || ""}`;
   group.appendChild(title);
   parentG.appendChild(group);
 }
@@ -941,7 +948,7 @@ function drawContainerNode(parentG, nd, el, darkMode) {
   const w = nd.width, h = nd.height, x = nd.x - w / 2, y = nd.y - h / 2;
   const rx = nodeRx(el.type);
 
-  const group = svgEl("g", { class: "aam-node aam-container", "data-id": el.id, transform: `translate(${x}, ${y})` });
+  const group = svgEl("g", { class: `aam-node aam-container ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
 
   group.appendChild(svgEl("rect", {
     width: w, height: h, rx, fill: c.fill, stroke: c.stroke, "stroke-width": "1.5", opacity: "0.5", class: "aam-node-rect",
@@ -962,8 +969,15 @@ function drawContainerNode(parentG, nd, el, darkMode) {
     group.appendChild(iconG);
   }
 
+  const badge = badgeText(el);
+  if (badge) {
+    const b = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP + 10, class: "aam-node-badge", fill: c.text });
+    b.textContent = badge;
+    group.appendChild(b);
+  }
+
   const title = svgEl("title");
-  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})\n${el.documentation || ""}`;
+  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})${badge ? "\n" + badge : ""}\n${el.documentation || ""}`;
   group.appendChild(title);
   parentG.appendChild(group);
 }
@@ -979,7 +993,7 @@ function drawEdge(parentG, edgeData, darkMode) {
   let d = `M ${pts[0].x} ${pts[0].y}`;
   for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`;
 
-  const path = svgEl("path", { d, fill: "none", stroke: strokeColor, "stroke-width": "1.3", class: "aam-edge" });
+  const path = svgEl("path", { d, fill: "none", stroke: strokeColor, "stroke-width": "1.3", class: `aam-edge ${statusClass(rel.status)}`.trim() });
   if (style.dash) path.setAttribute("stroke-dasharray", style.dash);
   if (style.srcMarker) path.setAttribute("marker-start", `url(#${style.srcMarker})`);
   if (style.tgtMarker) path.setAttribute("marker-end", `url(#${style.tgtMarker})`);
@@ -1054,15 +1068,15 @@ function render({ model, el }) {
   wrapper.className = "aam-wrapper";
   el.appendChild(wrapper);
 
-  // Auto-detect host theme (Tailwind dark/dark-theme class, data-theme, or prefers-color-scheme)
+  // Auto-detect host theme: an explicit data-theme (closest ancestor, html or body) wins over a
+  // dark/dark-theme class, which wins over prefers-color-scheme
   function detectHostDark() {
-    const html = document.documentElement;
-    if (html.classList.contains("dark") || html.classList.contains("dark-theme")) return true;
-    if (html.dataset.theme === "dark") return true;
-    if (document.body?.classList.contains("dark") || document.body?.classList.contains("dark-theme")) return true;
-    if (document.body?.dataset.theme === "dark") return true;
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
-    return false;
+    const html = document.documentElement, body = document.body;
+    const host = el.closest ? el.closest("[data-theme]") : null;
+    const theme = host?.dataset.theme || html.dataset.theme || body?.dataset.theme || undefined;
+    const darkClass = [html, body].some((n) => n && (n.classList.contains("dark") || n.classList.contains("dark-theme")));
+    const prefersDark = Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    return resolveDark({ theme, darkClass, prefersDark });
   }
 
   // Always auto-detect and observe theme changes
@@ -1153,8 +1167,20 @@ function render({ model, el }) {
     graphContainer.querySelectorAll(".aam-node").forEach((node) => {
       node.addEventListener("click", () => {
         const found = allEls.find((e) => e.id === node.dataset.id);
-        if (found) { model.set("selected_element", { ...found }); model.save_changes(); showDetails(details, found); }
+        if (found) { model.set("selected_element", { ...found }); model.save_changes(); showDetails(details, found); applyMarks(); }
       });
+    });
+    applyMarks();
+  }
+
+  // Outline the selected element (clicked, or set by the host by id) and the host's highlight_ids
+  function applyMarks() {
+    const selected = model.get("selected_element");
+    const selectedId = selected && selected.id != null ? String(selected.id) : null;
+    const marked = highlightIds(model.get("highlight_ids"));
+    graphContainer.querySelectorAll(".aam-node").forEach((node) => {
+      node.classList.toggle("aam-selected", node.dataset.id === selectedId);
+      node.classList.toggle("aam-highlight", marked.has(node.dataset.id));
     });
   }
 
@@ -1231,6 +1257,8 @@ function render({ model, el }) {
   model.on("change:elements", rebuildDiagram);
   model.on("change:relationships", rebuildDiagram);
   model.on("change:dark_mode", rebuildDiagram);
+  model.on("change:selected_element", applyMarks);
+  model.on("change:highlight_ids", applyMarks);
   model.on("change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); });
   rebuildDiagram();
 }
