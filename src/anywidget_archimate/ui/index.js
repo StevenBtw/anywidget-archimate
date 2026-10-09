@@ -145,54 +145,57 @@ function svgEl(tag, attrs = {}) {
 function buildMarkerDefs() {
   const defs = svgEl("defs");
 
-  const arrowFilled = svgEl("marker", {
-    id: "arrow-filled", viewBox: "0 0 10 10", refX: "10", refY: "5",
-    markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
-  });
-  arrowFilled.appendChild(svgEl("path", { d: "M 0 0 L 10 5 L 0 10 Z", fill: "#666" }));
-  defs.appendChild(arrowFilled);
+  // One set per line color: the default grey, and the color of each status that recolors an edge
+  for (const [status, color] of [[null, "#666"], ...STATUS_ACCENTS]) {
+    const arrowFilled = svgEl("marker", {
+      id: markerId("arrow-filled", status), viewBox: "0 0 10 10", refX: "10", refY: "5",
+      markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
+    });
+    arrowFilled.appendChild(svgEl("path", { d: "M 0 0 L 10 5 L 0 10 Z", fill: color }));
+    defs.appendChild(arrowFilled);
 
-  const arrowHollow = svgEl("marker", {
-    id: "arrow-hollow", viewBox: "0 0 10 10", refX: "10", refY: "5",
-    markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
-  });
-  arrowHollow.appendChild(svgEl("path", {
-    d: "M 0 0 L 10 5 L 0 10 Z", fill: "#fff", stroke: "#666", "stroke-width": "1.5",
-  }));
-  defs.appendChild(arrowHollow);
+    const arrowHollow = svgEl("marker", {
+      id: markerId("arrow-hollow", status), viewBox: "0 0 10 10", refX: "10", refY: "5",
+      markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
+    });
+    arrowHollow.appendChild(svgEl("path", {
+      d: "M 0 0 L 10 5 L 0 10 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+    }));
+    defs.appendChild(arrowHollow);
 
-  // Hollow triangle (larger, for Realization/Specialization)
-  const triHollow = svgEl("marker", {
-    id: "triangle-hollow", viewBox: "0 0 12 12", refX: "12", refY: "6",
-    markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
-  });
-  triHollow.appendChild(svgEl("path", {
-    d: "M 0 0 L 12 6 L 0 12 Z", fill: "#fff", stroke: "#666", "stroke-width": "1.5",
-  }));
-  defs.appendChild(triHollow);
+    // Hollow triangle (larger, for Realization/Specialization)
+    const triHollow = svgEl("marker", {
+      id: markerId("triangle-hollow", status), viewBox: "0 0 12 12", refX: "12", refY: "6",
+      markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
+    });
+    triHollow.appendChild(svgEl("path", {
+      d: "M 0 0 L 12 6 L 0 12 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+    }));
+    defs.appendChild(triHollow);
 
-  const diamondFilled = svgEl("marker", {
-    id: "diamond-filled", viewBox: "0 0 12 12", refX: "6", refY: "6",
-    markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
-  });
-  diamondFilled.appendChild(svgEl("path", { d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: "#666" }));
-  defs.appendChild(diamondFilled);
+    const diamondFilled = svgEl("marker", {
+      id: markerId("diamond-filled", status), viewBox: "0 0 12 12", refX: "6", refY: "6",
+      markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
+    });
+    diamondFilled.appendChild(svgEl("path", { d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: color }));
+    defs.appendChild(diamondFilled);
 
-  const diamondHollow = svgEl("marker", {
-    id: "diamond-hollow", viewBox: "0 0 12 12", refX: "6", refY: "6",
-    markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
-  });
-  diamondHollow.appendChild(svgEl("path", {
-    d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: "#fff", stroke: "#666", "stroke-width": "1.5",
-  }));
-  defs.appendChild(diamondHollow);
+    const diamondHollow = svgEl("marker", {
+      id: markerId("diamond-hollow", status), viewBox: "0 0 12 12", refX: "6", refY: "6",
+      markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
+    });
+    diamondHollow.appendChild(svgEl("path", {
+      d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+    }));
+    defs.appendChild(diamondHollow);
 
-  const circleFilled = svgEl("marker", {
-    id: "circle-filled", viewBox: "0 0 10 10", refX: "5", refY: "5",
-    markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
-  });
-  circleFilled.appendChild(svgEl("circle", { cx: "5", cy: "5", r: "4", fill: "#666" }));
-  defs.appendChild(circleFilled);
+    const circleFilled = svgEl("marker", {
+      id: markerId("circle-filled", status), viewBox: "0 0 10 10", refX: "5", refY: "5",
+      markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
+    });
+    circleFilled.appendChild(svgEl("circle", { cx: "5", cy: "5", r: "4", fill: color }));
+    defs.appendChild(circleFilled);
+  }
 
   return defs;
 }
@@ -325,7 +328,11 @@ function buildFilterPanel(model, onFilterChange) {
   model.on("change:elements", renderPanel);
   model.on("change:relationships", renderPanel);
   renderPanel();
-  return { element: panel, render: renderPanel };
+  const dispose = () => {
+    model.off("change:elements", renderPanel);
+    model.off("change:relationships", renderPanel);
+  };
+  return { element: panel, render: renderPanel, dispose };
 }
 
 function addToggleLinks(header, allKeys, hiddenSet, callback) {
@@ -956,9 +963,9 @@ function drawContainerNode(parentG, nd, el, darkMode) {
   group.appendChild(svgEl("rect", {
     width: w, height: h, rx, fill: c.fill, stroke: c.stroke, "stroke-width": "1.5", opacity: "0.5", class: "aam-node-rect",
   }));
-  // Header
-  group.appendChild(svgEl("rect", { width: w, height: CONTAINER_PAD_TOP - 2, rx, fill: c.stroke, opacity: "0.2" }));
-  group.appendChild(svgEl("rect", { x: 0, y: Math.min(rx, CONTAINER_PAD_TOP - 2), width: w, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: c.stroke, opacity: "0.2" }));
+  // Header (a status that recolors the body recolors the header too, see DIAGRAM_CSS)
+  group.appendChild(svgEl("rect", { width: w, height: CONTAINER_PAD_TOP - 2, rx, fill: c.stroke, opacity: "0.2", class: "aam-node-header" }));
+  group.appendChild(svgEl("rect", { x: 0, y: Math.min(rx, CONTAINER_PAD_TOP - 2), width: w, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: c.stroke, opacity: "0.2", class: "aam-node-header" }));
 
   const text = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP / 2 + 1, "dominant-baseline": "middle", class: "aam-node-label", fill: c.text, "font-size": "11" });
   text.textContent = truncate(el.name, 30);
@@ -998,8 +1005,8 @@ function drawEdge(parentG, edgeData, darkMode) {
 
   const path = svgEl("path", { d, fill: "none", stroke: strokeColor, "stroke-width": "1.3", class: `aam-edge ${statusClass(rel.status)}`.trim() });
   if (style.dash) path.setAttribute("stroke-dasharray", style.dash);
-  if (style.srcMarker) path.setAttribute("marker-start", `url(#${style.srcMarker})`);
-  if (style.tgtMarker) path.setAttribute("marker-end", `url(#${style.tgtMarker})`);
+  if (style.srcMarker) path.setAttribute("marker-start", `url(#${markerId(style.srcMarker, rel.status)})`);
+  if (style.tgtMarker) path.setAttribute("marker-end", `url(#${markerId(style.tgtMarker, rel.status)})`);
 
   const title = svgEl("title");
   title.textContent = `${rel.type}${rel.name ? ": " + rel.name : ""}`;
@@ -1254,16 +1261,21 @@ function render({ model, el }) {
     img.src = url;
   });
 
-  model.on("change:elements", rebuildDiagram);
-  model.on("change:relationships", rebuildDiagram);
-  model.on("change:dark_mode", rebuildDiagram);
-  model.on("change:selected_element", applyMarks);
-  model.on("change:highlight_ids", applyMarks);
-  model.on("change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); });
+  const listeners = [
+    ["change:elements", rebuildDiagram],
+    ["change:relationships", rebuildDiagram],
+    ["change:dark_mode", rebuildDiagram],
+    ["change:selected_element", applyMarks],
+    ["change:highlight_ids", applyMarks],
+    ["change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); }],
+  ];
+  for (const [event, fn] of listeners) model.on(event, fn);
   rebuildDiagram();
 
-  // Stop following the page theme once the host removes the widget
+  // Once the host removes the widget, stop listening to the model and following the page theme
   return () => {
+    for (const [event, fn] of listeners) model.off(event, fn);
+    filterPanel.dispose();
     themeObserver.disconnect();
     rootObserver.disconnect();
     colorScheme?.removeEventListener("change", syncTheme);

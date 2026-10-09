@@ -1,6 +1,7 @@
 // Mounts the assembled widget module in jsdom with a plain-object model (get, set, on, off, save_changes),
 // the way a host without Jupyter does. tests/test_ui.py writes the module and passes its path in
-// AAM_WIDGET_MODULE; jsdom comes from `npm ci --prefix tests/js` (required on CI, skipped elsewhere if missing).
+// AAM_WIDGET_MODULE; jsdom comes from `npm ci --prefix tests/js`. On CI both are required; elsewhere the
+// tests are skipped without them.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
@@ -12,11 +13,12 @@ try {
   // not installed
 }
 const MODULE = process.env.AAM_WIDGET_MODULE;
-const skip = !MODULE
+const MISSING = !MODULE
   ? "AAM_WIDGET_MODULE is not set (tests/test_ui.py sets it)"
-  : !JSDOM && !process.env.CI
+  : !JSDOM
     ? "jsdom is not installed (npm ci --prefix tests/js)"
-    : false;
+    : null;
+const skip = process.env.CI ? false : (MISSING ?? false);
 
 // 15 elements over three layers, 10 relationships (no Composition or Aggregation, so nothing nests)
 const ELEMENTS = [
@@ -64,11 +66,13 @@ function makeModel(values) {
     off: (event, fn) => handlers.set(event, (handlers.get(event) ?? []).filter((h) => h !== fn)),
     save_changes() {},
     send() {},
+    listenerCount: () => [...handlers.values()].reduce((n, list) => n + list.length, 0),
   };
 }
 
 // Render into #host (the body holds just that unless `body` says otherwise); returns what a test needs
 async function mount({ values = {}, body = '<div id="host"></div>', htmlAttrs = "", prefersDark = false } = {}) {
+  assert.equal(MISSING, null, MISSING);
   const dom = new JSDOM(`<!doctype html><html ${htmlAttrs}><body>${body}</body></html>`);
   dom.window.matchMedia = (query) => ({ matches: prefersDark && query.includes("dark"), addEventListener() {}, removeEventListener() {} });
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver });
@@ -76,11 +80,17 @@ async function mount({ values = {}, body = '<div id="host"></div>', htmlAttrs = 
   const model = makeModel({ elements: ELEMENTS, relationships: RELATIONSHIPS, ...values });
   const el = dom.window.document.querySelector("#host");
   const cleanup = widget.render({ model, el });
+  assert.equal(typeof cleanup, "function", "render returns a cleanup function");
+  let cleaned = false;
+  const unmount = () => {
+    if (!cleaned) cleanup();
+    cleaned = true;
+  };
   const close = () => {
-    if (typeof cleanup === "function") cleanup();
+    unmount();
     dom.window.close();
   };
-  return { dom, model, el, close };
+  return { dom, model, el, unmount, close };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -100,7 +110,8 @@ test("comparison status and badges render, and relationships keep their ArchiMat
   const elements = ELEMENTS.map((e) =>
     e.id === "a1" ? { ...e, status: "changed", badge: "2/3" } : e.id === "a5" ? { ...e, status: "only_a", badge: "" } : { ...e, status: "stable", badge: "" },
   );
-  const relationships = RELATIONSHIPS.map((r) => (r.id === "r6" ? { ...r, status: "partial" } : { ...r, status: "stable" }));
+  const relStatus = { r6: "partial", r4: "only_b" };
+  const relationships = RELATIONSHIPS.map((r) => ({ ...r, status: relStatus[r.id] ?? "stable" }));
   const { el, close } = await mount({ values: { elements, relationships } });
   try {
     const node = (id) => el.querySelector(`.aam-node[data-id="${id}"]`);
@@ -113,6 +124,12 @@ test("comparison status and badges render, and relationships keep their ArchiMat
     const partial = el.querySelectorAll("path.aam-edge.aam-status-partial");
     assert.equal(partial.length, 1);
     assert.equal(partial[0].getAttribute("stroke-dasharray"), "6 4"); // Flow's dash
+    assert.equal(partial[0].getAttribute("marker-end"), "url(#arrow-filled)"); // faded, not recolored
+
+    // A recolored relationship (only_b, Serving) ends in an arrowhead of its own color
+    const onlyB = el.querySelector("path.aam-edge.aam-status-only-b");
+    assert.equal(onlyB.getAttribute("marker-end"), "url(#arrow-hollow-only-b)");
+    assert.equal(el.querySelector("#arrow-hollow-only-b path").getAttribute("stroke"), "#2e9b4f");
 
     // The comparison styling travels with the SVG, so SVG and PNG exports keep it
     const style = el.querySelector("svg.aam-svg > style");
@@ -136,6 +153,35 @@ test("the host can select one element and highlight several", { skip }, async ()
     model.set("elements", [...ELEMENTS]); // a rebuild keeps the marks
     assert.deepEqual(marked("aam-selected"), ["a2"]);
     assert.deepEqual(marked("aam-highlight"), ["t1", "t3"]);
+  } finally {
+    close();
+  }
+});
+
+test("a container's header band is marked so its status can color it", { skip }, async () => {
+  const elements = [
+    { id: "p", name: "Web shop", type: "ApplicationComponent", layer: "Application", documentation: "", status: "changed" },
+    { id: "c", name: "Cart", type: "ApplicationComponent", layer: "Application", documentation: "" },
+  ];
+  const relationships = [{ id: "r", source: "p", target: "c", type: "Composition", name: "" }];
+  const { el, close } = await mount({ values: { elements, relationships } });
+  try {
+    const container = el.querySelector('.aam-node.aam-container[data-id="p"]');
+    assert.ok(container.classList.contains("aam-status-changed"));
+    assert.equal(container.querySelectorAll(".aam-node-header").length, 2);
+  } finally {
+    close();
+  }
+});
+
+test("removing the widget detaches it from the model", { skip }, async () => {
+  const { el, model, unmount, close } = await mount();
+  try {
+    assert.ok(model.listenerCount() > 0);
+    unmount();
+    assert.equal(model.listenerCount(), 0);
+    model.set("highlight_ids", ["t1"]); // no longer reaches the removed view
+    assert.equal(el.querySelectorAll(".aam-highlight").length, 0);
   } finally {
     close();
   }

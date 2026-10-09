@@ -3,7 +3,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { DIAGRAM_CSS, badgeText, highlightIds, resolveDark, statusClass } from "../../src/anywidget_archimate/ui/status.js";
+import {
+  DIAGRAM_CSS,
+  STATUS_ACCENTS,
+  badgeText,
+  highlightIds,
+  markerId,
+  resolveDark,
+  statusClass,
+} from "../../src/anywidget_archimate/ui/status.js";
 
 test("each comparison status maps to its own class; stable and unknown get none", () => {
   assert.equal(statusClass("partial"), "aam-status-partial");
@@ -35,6 +43,22 @@ test("edge status rules never set a dash, so relationships keep their ArchiMate 
   const edgeRules = DIAGRAM_CSS.split("}").filter((rule) => rule.includes(".aam-edge"));
   assert.ok(edgeRules.length >= 5);
   for (const rule of edgeRules) assert.doesNotMatch(rule, /stroke-dasharray/);
+});
+
+test("a recolored relationship points to arrowheads in its own color", () => {
+  assert.equal(markerId("arrow-filled", "only_a"), "arrow-filled-only-a");
+  assert.equal(markerId("arrow-filled", "changed"), "arrow-filled-changed");
+  assert.equal(markerId("arrow-filled", "partial"), "arrow-filled");
+  assert.equal(markerId("arrow-filled", undefined), "arrow-filled");
+  assert.equal(markerId("arrow-filled", "constructor"), "arrow-filled");
+});
+
+test("a status color is shared by the edge line and a container's header band", () => {
+  assert.deepEqual([...STATUS_ACCENTS.keys()].sort(), ["changed", "only_a", "only_b"]);
+  for (const [status, color] of STATUS_ACCENTS) {
+    assert.ok(DIAGRAM_CSS.includes(`.aam-edge.${statusClass(status)} { stroke: ${color}; }`), status);
+    assert.ok(DIAGRAM_CSS.includes(`.aam-node.${statusClass(status)} .aam-node-header { fill: ${color}; }`), status);
+  }
 });
 
 test("an explicit host theme wins over the operating system", () => {

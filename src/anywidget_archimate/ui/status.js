@@ -3,6 +3,13 @@
 const STATUSES = new Set(["partial", "changed", "only_a", "only_b", "ghost"]);
 const BADGE_MAX = 26;
 
+// The darker color of a status that recolors: edge lines and their arrowheads, and container header bands
+export const STATUS_ACCENTS = new Map([
+  ["changed", "#d4900f"],
+  ["only_a", "#d1453b"],
+  ["only_b", "#2e9b4f"],
+]);
+
 // Comparison styling and the badge font. The diagram SVG carries these in its own <style>, so the SVG and
 // PNG exports keep them. Edge rules never set a dash: the dash belongs to the relationship type.
 export const DIAGRAM_CSS = `
@@ -16,10 +23,15 @@ export const DIAGRAM_CSS = `
 .aam-node.aam-status-ghost .aam-node-rect { stroke-dasharray: 4 3; }
 .aam-edge.aam-status-partial { opacity: 0.5; }
 .aam-edge.aam-status-ghost { opacity: 0.28; }
-.aam-edge.aam-status-changed { stroke: #d4900f; }
-.aam-edge.aam-status-only-a { stroke: #d1453b; }
-.aam-edge.aam-status-only-b { stroke: #2e9b4f; }
+${[...STATUS_ACCENTS]
+  .map(([status, color]) => `.aam-edge.${statusClass(status)} { stroke: ${color}; }\n.aam-node.${statusClass(status)} .aam-node-header { fill: ${color}; }`)
+  .join("\n")}
 `;
+
+// Marker id for a relationship's arrowhead or tail: "arrow-filled", or "arrow-filled-only-a" on a recolored edge
+export function markerId(marker, status) {
+  return STATUS_ACCENTS.has(status) ? `${marker}-${statusClass(status).slice("aam-status-".length)}` : marker;
+}
 
 // CSS class for an element or relationship status; "stable" and unknown values get none
 export function statusClass(status) {

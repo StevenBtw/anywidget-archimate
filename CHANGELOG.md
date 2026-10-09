@@ -4,7 +4,7 @@
 
 ### New Features
 
-- **Comparison styling**: Elements and relationships accept an optional `status` for showing several runs of one model. On elements, `partial` is dashed and faded, `changed` has an amber fill, `only_a` red, `only_b` green, and `ghost` is very faint and dashed. On relationships, `partial` is faded, `ghost` very faint, and `changed`, `only_a` and `only_b` have an amber, red or green line; relationships keep their ArchiMate dash. `stable` or no status draws as before. SVG and PNG exports keep the styling
+- **Comparison styling**: Elements and relationships accept an optional `status` for showing several runs of one model. On elements, `partial` is dashed and faded, `changed` has an amber fill, `only_a` red, `only_b` green, and `ghost` is very faint and dashed. A container's header band takes the color of a `changed`, `only_a` or `only_b` status too. On relationships, `partial` is faded, `ghost` very faint, and `changed`, `only_a` and `only_b` have an amber, red or green line with arrowheads in the same color; relationships keep their ArchiMate dash. `stable` or no status draws as before. SVG and PNG exports keep the styling
 - **Element badges**: An optional `badge` on an element (for example "2/3" or "only in run 1") is drawn in its top left corner and added to its tooltip; long text is cut to 26 characters, and an empty badge draws nothing
 - **Host-driven selection**: Setting `selected_element` from Python or the host (a dict with at least `id`) outlines that element; clicking an element still sets it from the browser
 - **Highlights**: New `highlight_ids` trait (a list of element ids) outlines several elements at once, for example all elements behind one difference
@@ -13,7 +13,8 @@
 
 - **No network requests**: dagre 0.8.5 (MIT) is bundled with the widget instead of loaded from esm.sh, so the widget works offline and under a strict Content Security Policy, and the first render no longer waits on a CDN
 - **JavaScript tests**: Node tests for the comparison, badge, theme and highlight helpers, a check that the assembled module loads offline, and render tests that mount the widget in jsdom with a plain-object model (no Jupyter, no Python); pytest runs them when Node.js is installed, and the render tests need `npm ci --prefix tests/js`
-- **Theme follows any ancestor**: The widget now follows `data-theme` changes on any ancestor, not only on `<html>` and `<body>`, ignores `data-theme` values other than `light` and `dark` (for example a design-system theme name), and stops observing the page when the host removes it
+- **Theme follows any ancestor**: The widget now follows `data-theme` changes on any ancestor, not only on `<html>` and `<body>`, and ignores `data-theme` values other than `light` and `dark` (for example a design-system theme name)
+- **Clean removal**: When the host removes the widget, it stops listening to the model and observing the page, so a re-displayed widget no longer leaves an earlier view rebuilding in the background
 
 ### Fixes
 
