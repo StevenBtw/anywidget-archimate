@@ -145,54 +145,57 @@ function svgEl(tag, attrs = {}) {
 function buildMarkerDefs() {
   const defs = svgEl("defs");
 
-  const arrowFilled = svgEl("marker", {
-    id: "arrow-filled", viewBox: "0 0 10 10", refX: "10", refY: "5",
-    markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
-  });
-  arrowFilled.appendChild(svgEl("path", { d: "M 0 0 L 10 5 L 0 10 Z", fill: "#666" }));
-  defs.appendChild(arrowFilled);
+  // One set per line color: the default grey, and the color of each status that recolors an edge
+  for (const [status, color] of [[null, "#666"], ...STATUS_ACCENTS]) {
+    const arrowFilled = svgEl("marker", {
+      id: markerId("arrow-filled", status), viewBox: "0 0 10 10", refX: "10", refY: "5",
+      markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
+    });
+    arrowFilled.appendChild(svgEl("path", { d: "M 0 0 L 10 5 L 0 10 Z", fill: color }));
+    defs.appendChild(arrowFilled);
 
-  const arrowHollow = svgEl("marker", {
-    id: "arrow-hollow", viewBox: "0 0 10 10", refX: "10", refY: "5",
-    markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
-  });
-  arrowHollow.appendChild(svgEl("path", {
-    d: "M 0 0 L 10 5 L 0 10 Z", fill: "#fff", stroke: "#666", "stroke-width": "1.5",
-  }));
-  defs.appendChild(arrowHollow);
+    const arrowHollow = svgEl("marker", {
+      id: markerId("arrow-hollow", status), viewBox: "0 0 10 10", refX: "10", refY: "5",
+      markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
+    });
+    arrowHollow.appendChild(svgEl("path", {
+      d: "M 0 0 L 10 5 L 0 10 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+    }));
+    defs.appendChild(arrowHollow);
 
-  // Hollow triangle (larger, for Realization/Specialization)
-  const triHollow = svgEl("marker", {
-    id: "triangle-hollow", viewBox: "0 0 12 12", refX: "12", refY: "6",
-    markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
-  });
-  triHollow.appendChild(svgEl("path", {
-    d: "M 0 0 L 12 6 L 0 12 Z", fill: "#fff", stroke: "#666", "stroke-width": "1.5",
-  }));
-  defs.appendChild(triHollow);
+    // Hollow triangle (larger, for Realization/Specialization)
+    const triHollow = svgEl("marker", {
+      id: markerId("triangle-hollow", status), viewBox: "0 0 12 12", refX: "12", refY: "6",
+      markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
+    });
+    triHollow.appendChild(svgEl("path", {
+      d: "M 0 0 L 12 6 L 0 12 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+    }));
+    defs.appendChild(triHollow);
 
-  const diamondFilled = svgEl("marker", {
-    id: "diamond-filled", viewBox: "0 0 12 12", refX: "6", refY: "6",
-    markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
-  });
-  diamondFilled.appendChild(svgEl("path", { d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: "#666" }));
-  defs.appendChild(diamondFilled);
+    const diamondFilled = svgEl("marker", {
+      id: markerId("diamond-filled", status), viewBox: "0 0 12 12", refX: "6", refY: "6",
+      markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
+    });
+    diamondFilled.appendChild(svgEl("path", { d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: color }));
+    defs.appendChild(diamondFilled);
 
-  const diamondHollow = svgEl("marker", {
-    id: "diamond-hollow", viewBox: "0 0 12 12", refX: "6", refY: "6",
-    markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
-  });
-  diamondHollow.appendChild(svgEl("path", {
-    d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: "#fff", stroke: "#666", "stroke-width": "1.5",
-  }));
-  defs.appendChild(diamondHollow);
+    const diamondHollow = svgEl("marker", {
+      id: markerId("diamond-hollow", status), viewBox: "0 0 12 12", refX: "6", refY: "6",
+      markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
+    });
+    diamondHollow.appendChild(svgEl("path", {
+      d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+    }));
+    defs.appendChild(diamondHollow);
 
-  const circleFilled = svgEl("marker", {
-    id: "circle-filled", viewBox: "0 0 10 10", refX: "5", refY: "5",
-    markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
-  });
-  circleFilled.appendChild(svgEl("circle", { cx: "5", cy: "5", r: "4", fill: "#666" }));
-  defs.appendChild(circleFilled);
+    const circleFilled = svgEl("marker", {
+      id: markerId("circle-filled", status), viewBox: "0 0 10 10", refX: "5", refY: "5",
+      markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
+    });
+    circleFilled.appendChild(svgEl("circle", { cx: "5", cy: "5", r: "4", fill: color }));
+    defs.appendChild(circleFilled);
+  }
 
   return defs;
 }
@@ -325,7 +328,11 @@ function buildFilterPanel(model, onFilterChange) {
   model.on("change:elements", renderPanel);
   model.on("change:relationships", renderPanel);
   renderPanel();
-  return { element: panel, render: renderPanel };
+  const dispose = () => {
+    model.off("change:elements", renderPanel);
+    model.off("change:relationships", renderPanel);
+  };
+  return { element: panel, render: renderPanel, dispose };
 }
 
 function addToggleLinks(header, allKeys, hiddenSet, callback) {
@@ -843,6 +850,9 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
     width: "100%", height: "100%",
     viewBox: `0 0 ${layout.width} ${layout.height}`, class: "aam-svg",
   });
+  const style = svgEl("style");
+  style.textContent = DIAGRAM_CSS;
+  svg.appendChild(style);
   svg.appendChild(buildMarkerDefs());
   const mainG = svgEl("g", { class: "aam-main" });
   svg.appendChild(mainG);
@@ -898,7 +908,7 @@ function drawNode(parentG, nd, el, darkMode) {
   const x = nd.x - NODE_WIDTH / 2, y = nd.y - NODE_HEIGHT / 2;
   const rx = nodeRx(el.type);
 
-  const group = svgEl("g", { class: "aam-node", "data-id": el.id, transform: `translate(${x}, ${y})` });
+  const group = svgEl("g", { class: `aam-node ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
 
   group.appendChild(svgEl("rect", {
     width: NODE_WIDTH, height: NODE_HEIGHT, rx,
@@ -930,8 +940,15 @@ function drawNode(parentG, nd, el, darkMode) {
   sub.textContent = formatType(el.type);
   group.appendChild(sub);
 
+  const badge = badgeText(el);
+  if (badge) {
+    const b = svgEl("text", { x: 6, y: 10, class: "aam-node-badge", fill: c.text });
+    b.textContent = badge;
+    group.appendChild(b);
+  }
+
   const title = svgEl("title");
-  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})\n${el.documentation || ""}`;
+  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})${badge ? "\n" + badge : ""}\n${el.documentation || ""}`;
   group.appendChild(title);
   parentG.appendChild(group);
 }
@@ -941,14 +958,14 @@ function drawContainerNode(parentG, nd, el, darkMode) {
   const w = nd.width, h = nd.height, x = nd.x - w / 2, y = nd.y - h / 2;
   const rx = nodeRx(el.type);
 
-  const group = svgEl("g", { class: "aam-node aam-container", "data-id": el.id, transform: `translate(${x}, ${y})` });
+  const group = svgEl("g", { class: `aam-node aam-container ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
 
   group.appendChild(svgEl("rect", {
     width: w, height: h, rx, fill: c.fill, stroke: c.stroke, "stroke-width": "1.5", opacity: "0.5", class: "aam-node-rect",
   }));
-  // Header
-  group.appendChild(svgEl("rect", { width: w, height: CONTAINER_PAD_TOP - 2, rx, fill: c.stroke, opacity: "0.2" }));
-  group.appendChild(svgEl("rect", { x: 0, y: Math.min(rx, CONTAINER_PAD_TOP - 2), width: w, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: c.stroke, opacity: "0.2" }));
+  // Header (a status that recolors the body recolors the header too, see DIAGRAM_CSS)
+  group.appendChild(svgEl("rect", { width: w, height: CONTAINER_PAD_TOP - 2, rx, fill: c.stroke, opacity: "0.2", class: "aam-node-header" }));
+  group.appendChild(svgEl("rect", { x: 0, y: Math.min(rx, CONTAINER_PAD_TOP - 2), width: w, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: c.stroke, opacity: "0.2", class: "aam-node-header" }));
 
   const text = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP / 2 + 1, "dominant-baseline": "middle", class: "aam-node-label", fill: c.text, "font-size": "11" });
   text.textContent = truncate(el.name, 30);
@@ -962,8 +979,15 @@ function drawContainerNode(parentG, nd, el, darkMode) {
     group.appendChild(iconG);
   }
 
+  const badge = badgeText(el);
+  if (badge) {
+    const b = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP + 10, class: "aam-node-badge", fill: c.text });
+    b.textContent = badge;
+    group.appendChild(b);
+  }
+
   const title = svgEl("title");
-  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})\n${el.documentation || ""}`;
+  title.textContent = `${el.name}\n${formatType(el.type)} (${el.layer})${badge ? "\n" + badge : ""}\n${el.documentation || ""}`;
   group.appendChild(title);
   parentG.appendChild(group);
 }
@@ -979,10 +1003,10 @@ function drawEdge(parentG, edgeData, darkMode) {
   let d = `M ${pts[0].x} ${pts[0].y}`;
   for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`;
 
-  const path = svgEl("path", { d, fill: "none", stroke: strokeColor, "stroke-width": "1.3", class: "aam-edge" });
+  const path = svgEl("path", { d, fill: "none", stroke: strokeColor, "stroke-width": "1.3", class: `aam-edge ${statusClass(rel.status)}`.trim() });
   if (style.dash) path.setAttribute("stroke-dasharray", style.dash);
-  if (style.srcMarker) path.setAttribute("marker-start", `url(#${style.srcMarker})`);
-  if (style.tgtMarker) path.setAttribute("marker-end", `url(#${style.tgtMarker})`);
+  if (style.srcMarker) path.setAttribute("marker-start", `url(#${markerId(style.srcMarker, rel.status)})`);
+  if (style.tgtMarker) path.setAttribute("marker-end", `url(#${markerId(style.tgtMarker, rel.status)})`);
 
   const title = svgEl("title");
   title.textContent = `${rel.type}${rel.name ? ": " + rel.name : ""}`;
@@ -1054,15 +1078,16 @@ function render({ model, el }) {
   wrapper.className = "aam-wrapper";
   el.appendChild(wrapper);
 
-  // Auto-detect host theme (Tailwind dark/dark-theme class, data-theme, or prefers-color-scheme)
+  // Auto-detect host theme: an explicit data-theme of "light" or "dark" (closest ancestor, then html, then body)
+  // wins over a dark/dark-theme class, which wins over a light class, which wins over prefers-color-scheme
   function detectHostDark() {
-    const html = document.documentElement;
-    if (html.classList.contains("dark") || html.classList.contains("dark-theme")) return true;
-    if (html.dataset.theme === "dark") return true;
-    if (document.body?.classList.contains("dark") || document.body?.classList.contains("dark-theme")) return true;
-    if (document.body?.dataset.theme === "dark") return true;
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return true;
-    return false;
+    const html = document.documentElement, body = document.body;
+    const host = el.closest ? el.closest('[data-theme="light"], [data-theme="dark"]') : null;
+    const theme = [host, html, body].map((n) => n?.dataset.theme).find((t) => t === "light" || t === "dark");
+    const darkClass = [html, body].some((n) => n && (n.classList.contains("dark") || n.classList.contains("dark-theme")));
+    const lightClass = [html, body].some((n) => n && n.classList.contains("light"));
+    const prefersDark = Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    return resolveDark({ theme, darkClass, lightClass, prefersDark });
   }
 
   // Always auto-detect and observe theme changes
@@ -1070,30 +1095,26 @@ function render({ model, el }) {
   model.set("dark_mode", detectHostDark());
   model.save_changes();
 
-  const themeObserver = new MutationObserver(() => {
+  function syncTheme() {
     if (!autoTheme) return;
     const dark = detectHostDark();
     if (model.get("dark_mode") !== dark) {
       model.set("dark_mode", dark);
       model.save_changes();
     }
-  });
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
-  if (document.body) {
-    themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+  }
+
+  // data-theme anywhere in the page (any ancestor of the widget may carry it), plus html and body classes and style
+  const themeObserver = new MutationObserver(syncTheme);
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"], subtree: true });
+  const rootObserver = new MutationObserver(syncTheme);
+  for (const node of [document.documentElement, document.body]) {
+    if (node) rootObserver.observe(node, { attributes: true, attributeFilter: ["class", "style"] });
   }
 
   // Also listen for OS-level theme changes
-  if (window.matchMedia) {
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-      if (!autoTheme) return;
-      const dark = detectHostDark();
-      if (model.get("dark_mode") !== dark) {
-        model.set("dark_mode", dark);
-        model.save_changes();
-      }
-    });
-  }
+  const colorScheme = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  colorScheme?.addEventListener("change", syncTheme);
 
   const toolbar = document.createElement("div");
   toolbar.className = "aam-toolbar";
@@ -1153,8 +1174,20 @@ function render({ model, el }) {
     graphContainer.querySelectorAll(".aam-node").forEach((node) => {
       node.addEventListener("click", () => {
         const found = allEls.find((e) => e.id === node.dataset.id);
-        if (found) { model.set("selected_element", { ...found }); model.save_changes(); showDetails(details, found); }
+        if (found) { model.set("selected_element", { ...found }); model.save_changes(); showDetails(details, found); applyMarks(); }
       });
+    });
+    applyMarks();
+  }
+
+  // Outline the selected element (clicked, or set by the host by id) and the host's highlight_ids
+  function applyMarks() {
+    const selected = model.get("selected_element");
+    const selectedId = selected && selected.id != null ? String(selected.id) : null;
+    const marked = highlightIds(model.get("highlight_ids"));
+    graphContainer.querySelectorAll(".aam-node").forEach((node) => {
+      node.classList.toggle("aam-selected", node.dataset.id === selectedId);
+      node.classList.toggle("aam-highlight", marked.has(node.dataset.id));
     });
   }
 
@@ -1228,11 +1261,25 @@ function render({ model, el }) {
     img.src = url;
   });
 
-  model.on("change:elements", rebuildDiagram);
-  model.on("change:relationships", rebuildDiagram);
-  model.on("change:dark_mode", rebuildDiagram);
-  model.on("change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); });
+  const listeners = [
+    ["change:elements", rebuildDiagram],
+    ["change:relationships", rebuildDiagram],
+    ["change:dark_mode", rebuildDiagram],
+    ["change:selected_element", applyMarks],
+    ["change:highlight_ids", applyMarks],
+    ["change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); }],
+  ];
+  for (const [event, fn] of listeners) model.on(event, fn);
   rebuildDiagram();
+
+  // Once the host removes the widget, stop listening to the model and following the page theme
+  return () => {
+    for (const [event, fn] of listeners) model.off(event, fn);
+    filterPanel.dispose();
+    themeObserver.disconnect();
+    rootObserver.disconnect();
+    colorScheme?.removeEventListener("change", syncTheme);
+  };
 }
 
 function showDetails(container, el) {

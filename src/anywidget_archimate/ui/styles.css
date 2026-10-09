@@ -400,3 +400,9 @@
 }
 
 /* Dark mode toggle always visible — manual toggle disables auto-theme */
+
+/* Comparison status and badges: DIAGRAM_CSS in status.js, inside the diagram SVG so exports keep them */
+
+/* Selection (clicked or set by the host) and host highlights; not exported */
+.aam-node.aam-selected .aam-node-rect { stroke: #2f81f7; stroke-width: 3; }
+.aam-node.aam-highlight .aam-node-rect { stroke: #e3a33b; stroke-width: 3; }
