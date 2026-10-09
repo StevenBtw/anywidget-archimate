@@ -14,11 +14,11 @@
 - **No network requests**: dagre 0.8.5 (MIT) is bundled with the widget instead of loaded from esm.sh, so the widget works offline and under a strict Content Security Policy, and the first render no longer waits on a CDN
 - **JavaScript tests**: Node tests for the comparison, badge, theme and highlight helpers, a check that the assembled module loads offline, and render tests that mount the widget in jsdom with a plain-object model (no Jupyter, no Python); pytest runs them when Node.js is installed, and the render tests need `npm ci --prefix tests/js`
 - **Theme follows any ancestor**: The widget now follows `data-theme` changes on any ancestor, not only on `<html>` and `<body>`, and ignores `data-theme` values other than `light` and `dark` (for example a design-system theme name)
-- **Clean removal**: When the host removes the widget, it stops listening to the model and observing the page, so a re-displayed widget no longer leaves an earlier view rebuilding in the background
 
 ### Fixes
 
 - **Explicit host theme wins**: An explicit light choice on the host now overrides the operating system: `data-theme="light"` on the closest ancestor (then `<html>`, then `<body>`) or a `light` class on `<html>` or `<body>` renders light even when the operating system prefers dark. `data-theme` takes precedence over a `dark` class, which takes precedence over a `light` class, which takes precedence over `prefers-color-scheme` ([#13](https://github.com/StevenBtw/anywidget-archimate/issues/13))
+- **Clean removal**: When the host removes the widget, it stops listening to the model and observing the page, so a re-displayed widget no longer leaves an earlier view rebuilding in the background
 
 ## [0.2.0] - (2026-03-16)
 
