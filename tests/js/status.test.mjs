@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { badgeText, highlightIds, resolveDark, statusClass } from "../../src/anywidget_archimate/ui/status.js";
+import { DIAGRAM_CSS, badgeText, highlightIds, resolveDark, statusClass } from "../../src/anywidget_archimate/ui/status.js";
 
 test("each comparison status maps to its own class; stable and unknown get none", () => {
   assert.equal(statusClass("partial"), "aam-status-partial");
@@ -19,11 +19,22 @@ test("each comparison status maps to its own class; stable and unknown get none"
 test("badges are short single-line text", () => {
   assert.equal(badgeText({ badge: "2/3" }), "2/3");
   assert.equal(badgeText({ badge: "  only in run 1 \n" }), "only in run 1");
-  assert.equal(badgeText({ badge: "a very long badge text that does not fit on the element" }).length, 26);
+  assert.equal(badgeText({ badge: "a very long badge text that does not fit on the element" }), "a very long badge text th…");
   assert.equal(badgeText({}), "");
   assert.equal(badgeText({ badge: "" }), "");
   assert.equal(badgeText({ badge: "  " }), "");
   assert.equal(badgeText({ badge: 7 }), "7");
+});
+
+test("badges are cut by character, never inside a surrogate pair", () => {
+  assert.equal(badgeText({ badge: "x".repeat(24) + "😀😀" }), "x".repeat(24) + "😀😀");
+  assert.equal(badgeText({ badge: "x".repeat(24) + "😀😀😀" }), "x".repeat(24) + "😀…");
+});
+
+test("edge status rules never set a dash, so relationships keep their ArchiMate dash", () => {
+  const edgeRules = DIAGRAM_CSS.split("}").filter((rule) => rule.includes(".aam-edge"));
+  assert.ok(edgeRules.length >= 5);
+  for (const rule of edgeRules) assert.doesNotMatch(rule, /stroke-dasharray/);
 });
 
 test("an explicit host theme wins over the operating system", () => {
@@ -32,6 +43,12 @@ test("an explicit host theme wins over the operating system", () => {
   assert.equal(resolveDark({ theme: undefined, darkClass: true, prefersDark: false }), true);
   assert.equal(resolveDark({ theme: undefined, darkClass: false, prefersDark: true }), true);
   assert.equal(resolveDark({ theme: "", darkClass: false, prefersDark: false }), false);
+});
+
+test("a light class wins over the operating system, but not over a dark class or data-theme", () => {
+  assert.equal(resolveDark({ theme: undefined, darkClass: false, lightClass: true, prefersDark: true }), false);
+  assert.equal(resolveDark({ theme: undefined, darkClass: true, lightClass: true, prefersDark: false }), true);
+  assert.equal(resolveDark({ theme: "dark", darkClass: false, lightClass: true, prefersDark: false }), true);
 });
 
 test("highlight ids become a set of strings", () => {

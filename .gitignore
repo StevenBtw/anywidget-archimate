@@ -17,3 +17,4 @@ build/
 .DS_Store
 Thumbs.db
 .mypy_cache
+node_modules/

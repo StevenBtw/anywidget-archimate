@@ -26,6 +26,16 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
+      - name: Set up Node.js (JavaScript tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: tests/js/package-lock.json
+
+      - name: Install JavaScript test dependencies
+        run: npm ci --ignore-scripts --prefix tests/js
+
       - name: Lint
         run: uv run ruff check src/ tests/
 

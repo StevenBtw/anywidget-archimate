@@ -843,6 +843,9 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
     width: "100%", height: "100%",
     viewBox: `0 0 ${layout.width} ${layout.height}`, class: "aam-svg",
   });
+  const style = svgEl("style");
+  style.textContent = DIAGRAM_CSS;
+  svg.appendChild(style);
   svg.appendChild(buildMarkerDefs());
   const mainG = svgEl("g", { class: "aam-main" });
   svg.appendChild(mainG);
@@ -1068,15 +1071,16 @@ function render({ model, el }) {
   wrapper.className = "aam-wrapper";
   el.appendChild(wrapper);
 
-  // Auto-detect host theme: an explicit data-theme (closest ancestor, html or body) wins over a
-  // dark/dark-theme class, which wins over prefers-color-scheme
+  // Auto-detect host theme: an explicit data-theme of "light" or "dark" (closest ancestor, then html, then body)
+  // wins over a dark/dark-theme class, which wins over a light class, which wins over prefers-color-scheme
   function detectHostDark() {
     const html = document.documentElement, body = document.body;
-    const host = el.closest ? el.closest("[data-theme]") : null;
-    const theme = host?.dataset.theme || html.dataset.theme || body?.dataset.theme || undefined;
+    const host = el.closest ? el.closest('[data-theme="light"], [data-theme="dark"]') : null;
+    const theme = [host, html, body].map((n) => n?.dataset.theme).find((t) => t === "light" || t === "dark");
     const darkClass = [html, body].some((n) => n && (n.classList.contains("dark") || n.classList.contains("dark-theme")));
+    const lightClass = [html, body].some((n) => n && n.classList.contains("light"));
     const prefersDark = Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    return resolveDark({ theme, darkClass, prefersDark });
+    return resolveDark({ theme, darkClass, lightClass, prefersDark });
   }
 
   // Always auto-detect and observe theme changes
@@ -1084,30 +1088,26 @@ function render({ model, el }) {
   model.set("dark_mode", detectHostDark());
   model.save_changes();
 
-  const themeObserver = new MutationObserver(() => {
+  function syncTheme() {
     if (!autoTheme) return;
     const dark = detectHostDark();
     if (model.get("dark_mode") !== dark) {
       model.set("dark_mode", dark);
       model.save_changes();
     }
-  });
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
-  if (document.body) {
-    themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class", "data-theme", "style"] });
+  }
+
+  // data-theme anywhere in the page (any ancestor of the widget may carry it), plus html and body classes and style
+  const themeObserver = new MutationObserver(syncTheme);
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"], subtree: true });
+  const rootObserver = new MutationObserver(syncTheme);
+  for (const node of [document.documentElement, document.body]) {
+    if (node) rootObserver.observe(node, { attributes: true, attributeFilter: ["class", "style"] });
   }
 
   // Also listen for OS-level theme changes
-  if (window.matchMedia) {
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-      if (!autoTheme) return;
-      const dark = detectHostDark();
-      if (model.get("dark_mode") !== dark) {
-        model.set("dark_mode", dark);
-        model.save_changes();
-      }
-    });
-  }
+  const colorScheme = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  colorScheme?.addEventListener("change", syncTheme);
 
   const toolbar = document.createElement("div");
   toolbar.className = "aam-toolbar";
@@ -1261,6 +1261,13 @@ function render({ model, el }) {
   model.on("change:highlight_ids", applyMarks);
   model.on("change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); });
   rebuildDiagram();
+
+  // Stop following the page theme once the host removes the widget
+  return () => {
+    themeObserver.disconnect();
+    rootObserver.disconnect();
+    colorScheme?.removeEventListener("change", syncTheme);
+  };
 }
 
 function showDetails(container, el) {

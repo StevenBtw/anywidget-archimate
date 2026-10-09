@@ -4,19 +4,20 @@
 
 ### New Features
 
-- **Comparison styling**: Elements and relationships accept an optional `status` for showing several runs of one model: `partial` is dashed and faded, `changed` has an amber tint, `only_a` red, `only_b` green, and `ghost` is very faint and dashed; `stable` or no status draws as before
-- **Element badges**: An optional `badge` on an element (for example "2/3" or "only in run 1") is drawn in its top left corner and added to its tooltip; long text is cut to 26 characters
+- **Comparison styling**: Elements and relationships accept an optional `status` for showing several runs of one model. On elements, `partial` is dashed and faded, `changed` has an amber fill, `only_a` red, `only_b` green, and `ghost` is very faint and dashed. On relationships, `partial` is faded, `ghost` very faint, and `changed`, `only_a` and `only_b` have an amber, red or green line; relationships keep their ArchiMate dash. `stable` or no status draws as before. SVG and PNG exports keep the styling
+- **Element badges**: An optional `badge` on an element (for example "2/3" or "only in run 1") is drawn in its top left corner and added to its tooltip; long text is cut to 26 characters, and an empty badge draws nothing
 - **Host-driven selection**: Setting `selected_element` from Python or the host (a dict with at least `id`) outlines that element; clicking an element still sets it from the browser
 - **Highlights**: New `highlight_ids` trait (a list of element ids) outlines several elements at once, for example all elements behind one difference
 
 ### Improvements
 
 - **No network requests**: dagre 0.8.5 (MIT) is bundled with the widget instead of loaded from esm.sh, so the widget works offline and under a strict Content Security Policy, and the first render no longer waits on a CDN
-- **JavaScript tests**: Node tests for the comparison, badge, theme and highlight helpers, plus a check that the assembled module loads offline; pytest runs them when Node.js is installed
+- **JavaScript tests**: Node tests for the comparison, badge, theme and highlight helpers, a check that the assembled module loads offline, and render tests that mount the widget in jsdom with a plain-object model (no Jupyter, no Python); pytest runs them when Node.js is installed, and the render tests need `npm ci --prefix tests/js`
+- **Theme follows any ancestor**: The widget now follows `data-theme` changes on any ancestor, not only on `<html>` and `<body>`, ignores `data-theme` values other than `light` and `dark` (for example a design-system theme name), and stops observing the page when the host removes it
 
 ### Fixes
 
-- **Explicit host theme wins**: A `data-theme` attribute on the closest ancestor (then `<html>`, then `<body>`) now takes precedence over a `dark` class and over `prefers-color-scheme`, so `data-theme="light"` renders light even when the operating system is dark
+- **Explicit host theme wins**: An explicit light choice on the host now overrides the operating system: `data-theme="light"` on the closest ancestor (then `<html>`, then `<body>`) or a `light` class on `<html>` or `<body>` renders light even when the operating system prefers dark. `data-theme` takes precedence over a `dark` class, which takes precedence over a `light` class, which takes precedence over `prefers-color-scheme` ([#13](https://github.com/StevenBtw/anywidget-archimate/issues/13))
 
 ## [0.2.0] - (2026-03-16)
 

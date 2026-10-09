@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Test-only dependencies for the widget's JavaScript tests (the widget itself bundles everything it needs)",
+  "devDependencies": {
+    "jsdom": "29.1.1"
+  }
+}

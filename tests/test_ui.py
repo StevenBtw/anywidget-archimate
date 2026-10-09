@@ -1,12 +1,14 @@
-"""Tests for the assembled widget module (ESM string) and its JavaScript helpers.
+"""Tests for the assembled widget module (ESM string) and its JavaScript.
 
 The module must load without network access (dagre is bundled) and render in a
 host that only provides the anywidget model contract. Node.js runs the JavaScript
-checks (`node --test tests/js/*.test.mjs`); they are skipped where Node.js is not installed.
+tests in tests/js (helpers, and rendering in jsdom after `npm ci --prefix tests/js`);
+they are skipped where Node.js is not installed.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -47,10 +49,20 @@ def test_the_module_loads_offline_and_exports_render(tmp_path):
 
 
 @needs_node
-def test_javascript_helpers():
+def test_javascript(tmp_path):
     tests = sorted(str(path) for path in (ROOT / "tests" / "js").glob("*.test.mjs"))
+    assert tests, "no JavaScript tests found in tests/js"
+    module = tmp_path / "widget.mjs"
+    module.write_text(get_esm(), encoding="utf-8")
+
     proc = subprocess.run(
-        [NODE, "--test", *tests], capture_output=True, text=True, encoding="utf-8", cwd=ROOT, check=False
+        [NODE, "--test", *tests],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=ROOT,
+        env={**os.environ, "AAM_WIDGET_MODULE": str(module)},
+        check=False,
     )
 
     assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
