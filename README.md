@@ -46,6 +46,12 @@ uv sync
 uv run pytest
 ```
 
+The `examples/demo_marimo.py` example needs marimo, which is an optional extra:
+
+```bash
+uv sync --extra examples
+```
+
 ## License
 
 Apache-2.0

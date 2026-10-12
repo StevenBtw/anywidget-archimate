@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1] - (Unreleased)
+
+### Improvements
+
+- **Python 3.15**: CI now tests Python 3.15, and the package classifiers list 3.12 to 3.15
+- **Examples extra**: `marimo` moved from the dev dependencies to a new `examples` extra (`uv sync --extra examples` or `pip install anywidget-archimate[examples]`); only `examples/demo_marimo.py` needs it
+
+### Fixes
+
+- **Zoom survives redraws**: Switching the theme, updating `status` or `badge`, or changing `height` no longer resets the zoom and pan; the diagram refits only when its layout changes, for example after new data or a filter change
+- **Fit button**: Fit now returns to the whole diagram; before, it left the view unchanged
+
 ## [0.3.0] - (2026-10-09)
 
 ### New Features

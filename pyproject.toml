@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-archimate"
-version = "0.3.0"
+version = "0.3.1"
 description = "Interactive ArchiMate model viewer widget for Jupyter, Marimo, and VS Code notebooks"
 readme = "README.md"
 license = "Apache-2.0"
@@ -13,9 +13,17 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = ["anywidget>=0.9.21"]
+
+[project.optional-dependencies]
+# marimo needs loro, which has no Python 3.15 wheels yet; drop the marker once it does
+examples = ["marimo>=0.20.4; python_version < '3.15'"]
 
 [project.urls]
 Homepage = "https://github.com/StevenBtw/anywidget-archimate"
@@ -36,7 +44,6 @@ testpaths = ["tests"]
 
 [tool.uv]
 dev-dependencies = [
-    "marimo>=0.20.4",
     "pytest>=9.0.2",
     "ruff>=0.15.6",
 ]

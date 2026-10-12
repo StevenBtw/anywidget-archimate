@@ -95,6 +95,24 @@ async function mount({ values = {}, body = '<div id="host"></div>', htmlAttrs = 
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// jsdom has no layout, so map client coordinates 1:1 onto the diagram to let wheel events zoom
+function stubScreen(dom) {
+  const proto = dom.window.SVGSVGElement.prototype;
+  proto.createSVGPoint = () => ({ x: 0, y: 0, matrixTransform() { return { x: this.x, y: this.y }; } });
+  proto.getScreenCTM = () => ({ inverse: () => null });
+}
+
+const view = (el) => el.querySelector("svg.aam-svg").getAttribute("viewBox");
+const viewWidth = (el) => Number(view(el).split(" ")[2]);
+
+// Scroll over the diagram: negative steps zoom in, positive zoom out
+function wheel(dom, el, steps) {
+  const svg = el.querySelector("svg.aam-svg");
+  for (let i = 0; i < Math.abs(steps); i++) {
+    svg.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: Math.sign(steps) * 100, clientX: 100, clientY: 100, cancelable: true }));
+  }
+}
+
 test("renders every element and relationship of the model", { skip }, async () => {
   const { el, close } = await mount();
   try {
@@ -153,6 +171,63 @@ test("the host can select one element and highlight several", { skip }, async ()
     model.set("elements", [...ELEMENTS]); // a rebuild keeps the marks
     assert.deepEqual(marked("aam-selected"), ["a2"]);
     assert.deepEqual(marked("aam-highlight"), ["t1", "t3"]);
+  } finally {
+    close();
+  }
+});
+
+test("a theme switch or a status-only update keeps the zoom and pan", { skip }, async () => {
+  const { dom, el, model, close } = await mount();
+  try {
+    stubScreen(dom);
+    const fitted = view(el);
+    wheel(dom, el, -3);
+    const zoomed = view(el);
+    assert.notEqual(zoomed, fitted);
+
+    model.set("dark_mode", true);
+    assert.ok(el.querySelector(".aam-wrapper").classList.contains("aam-dark"));
+    assert.equal(view(el), zoomed);
+
+    model.set("elements", ELEMENTS.map((e) => ({ ...e, status: "changed", badge: "2/3" })));
+    model.set("relationships", RELATIONSHIPS.map((r) => ({ ...r, status: "partial" })));
+    assert.equal(el.querySelectorAll(".aam-node.aam-status-changed").length, ELEMENTS.length);
+    assert.equal(view(el), zoomed);
+
+    model.set("height", 400);
+    assert.equal(view(el), zoomed);
+  } finally {
+    close();
+  }
+});
+
+test("the zoom limit holds across a redraw that keeps the view", { skip }, async () => {
+  const { dom, el, model, close } = await mount();
+  try {
+    stubScreen(dom);
+    const fittedWidth = viewWidth(el);
+    wheel(dom, el, -40);
+    model.set("dark_mode", true);
+    wheel(dom, el, -40);
+    assert.ok(viewWidth(el) >= fittedWidth * 0.1 - 1e-9, `zoomed to ${viewWidth(el)} of ${fittedWidth}`);
+  } finally {
+    close();
+  }
+});
+
+test("Fit returns to the whole diagram, and a change that moves elements refits", { skip }, async () => {
+  const { dom, el, model, close } = await mount();
+  try {
+    stubScreen(dom);
+    const fitted = view(el);
+    wheel(dom, el, -3);
+    el.querySelector(".aam-btn-fit").click();
+    assert.equal(view(el), fitted);
+
+    wheel(dom, el, 2);
+    model.set("elements", ELEMENTS.filter((e) => e.layer !== "Technology"));
+    assert.match(view(el), /^0 0 [\d.]+ [\d.]+$/);
+    assert.notEqual(view(el), fitted);
   } finally {
     close();
   }
