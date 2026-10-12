@@ -837,11 +837,13 @@ function computeLayout(elements, relationships, nestElements) {
 // Rendering
 // ============================================================================
 
+// Draws the diagram fitted to the container; returns the SVG, its fitted viewBox and its layout key, or null
+// when there is nothing to draw
 function renderDiagram(container, elements, relationships, darkMode, nestElements) {
   container.innerHTML = "";
   if (!elements.length) {
     container.innerHTML = '<div class="aam-empty">No ArchiMate elements to display. Use <code>.load_xml(path)</code> or <code>ArchiMate.from_xml(path)</code>.</div>';
-    return;
+    return null;
   }
 
   const layout = computeLayout(elements, relationships, nestElements);
@@ -881,7 +883,15 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   }
 
   container.appendChild(svg);
-  setupZoomPan(svg, mainG);
+  setupZoomPan(svg, layout.width);
+  return { svg, fit: `0 0 ${layout.width} ${layout.height}`, key: layoutKey(layout) };
+}
+
+// Every element's id and box, and the diagram size: equal keys mean a redraw moved nothing (status, badge and
+// theme never move anything)
+function layoutKey(layout) {
+  const boxes = [...layout.nodes].map(([id, nd]) => `${id}:${nd.x},${nd.y},${nd.width},${nd.height}`);
+  return `${layout.width}x${layout.height};${boxes.join(";")}`;
 }
 
 function drawLayerBands(parentG, layout, svgWidth) {
@@ -1018,15 +1028,16 @@ function drawEdge(parentG, edgeData, darkMode) {
 // Zoom & Pan
 // ============================================================================
 
-function setupZoomPan(svg, mainG) {
-  let vb = svg.viewBox.baseVal, isPanning = false, startPt = { x: 0, y: 0 }, scale = 1;
+function setupZoomPan(svg, fitWidth) {
+  let vb = svg.viewBox.baseVal, isPanning = false, startPt = { x: 0, y: 0 };
 
   svg.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const d = e.deltaY > 0 ? 1.1 : 0.9, pt = svgPoint(svg, e), ns = scale * d;
+    // The zoom level follows from the view, so the limits hold after a kept view or Fit
+    const d = e.deltaY > 0 ? 1.1 : 0.9, pt = svgPoint(svg, e), ns = (vb.width * d) / fitWidth;
     if (ns < 0.1 || ns > 10) return;
     vb.x = pt.x - (pt.x - vb.x) * d; vb.y = pt.y - (pt.y - vb.y) * d;
-    vb.width *= d; vb.height *= d; scale = ns;
+    vb.width *= d; vb.height *= d;
   }, { passive: false });
 
   svg.addEventListener("mousedown", (e) => { if (e.button !== 0) return; isPanning = true; startPt = svgPoint(svg, e); svg.style.cursor = "grabbing"; });
@@ -1164,11 +1175,19 @@ function render({ model, el }) {
     return { elements: els, relationships: rels };
   }
 
+  // The fitted viewBox and layout key of the diagram on screen
+  let fitView = null, shownKey = null;
+
   function rebuildDiagram() {
     const dm = model.get("dark_mode");
     wrapper.classList.toggle("aam-dark", dm);
     const { elements, relationships } = getFilteredData();
-    renderDiagram(graphContainer, elements, relationships, dm, nestElements);
+    const view = graphContainer.querySelector("svg.aam-svg")?.getAttribute("viewBox");
+    const drawn = renderDiagram(graphContainer, elements, relationships, dm, nestElements);
+    // A redraw that moves nothing (a theme switch, a status-only update) keeps the zoom and pan; any other refits
+    if (drawn && view && drawn.key === shownKey) drawn.svg.setAttribute("viewBox", view);
+    fitView = drawn?.fit ?? null;
+    shownKey = drawn?.key ?? null;
 
     const allEls = model.get("elements") || [];
     graphContainer.querySelectorAll(".aam-node").forEach((node) => {
@@ -1193,8 +1212,8 @@ function render({ model, el }) {
 
   toolbar.querySelector(".aam-btn-filter").addEventListener("click", () => filterPanel.element.classList.toggle("aam-panel-open"));
   toolbar.querySelector(".aam-btn-fit").addEventListener("click", () => {
-    const s = graphContainer.querySelector("svg");
-    if (s) { const v = s.getAttribute("viewBox").split(" ").map(Number); s.setAttribute("viewBox", v.join(" ")); }
+    const s = graphContainer.querySelector("svg.aam-svg");
+    if (s && fitView) s.setAttribute("viewBox", fitView);
   });
   toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { autoTheme = false; model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
 
