@@ -5,39 +5,109 @@
 // Constants
 // ============================================================================
 
-// Archi standard colors
+// Archi standard colors; Plateau and Gap take the Implementation pink, so each band has one color
 const LAYER_COLORS = {
-  Business:    { fill: "#FFFFB5", stroke: "#C8C800", text: "#555500" },
-  Application: { fill: "#B5FFFF", stroke: "#00B2B2", text: "#005555" },
-  Technology:  { fill: "#C9E7B7", stroke: "#5BA83B", text: "#2D5A1E" },
-  Other:       { fill: "#E8E8E8", stroke: "#999999", text: "#333333" },
+  Motivation:     { fill: "#CCCCFF", stroke: "#8484E0", text: "#2E2E6B" },
+  Strategy:       { fill: "#F5DEAA", stroke: "#C99A3B", text: "#5C4211" },
+  Business:       { fill: "#FFFFB5", stroke: "#C8C800", text: "#555500" },
+  Application:    { fill: "#B5FFFF", stroke: "#00B2B2", text: "#005555" },
+  Technology:     { fill: "#C9E7B7", stroke: "#5BA83B", text: "#2D5A1E" },
+  Implementation: { fill: "#FFE0E0", stroke: "#DA7F7F", text: "#6B2525" },
+  Other:          { fill: "#E8E8E8", stroke: "#999999", text: "#333333" },
 };
 
-const LAYER_ORDER = ["Business", "Application", "Technology", "Other"];
-const LAYER_RANK = { Business: 0, Application: 1, Technology: 2, Other: 3 };
+// Bands top to bottom: why (Motivation, Strategy), what and how (Business, Application, Technology), then change
+const LAYER_ORDER = ["Motivation", "Strategy", "Business", "Application", "Technology", "Implementation", "Other"];
+const LAYER_RANK = Object.fromEntries(LAYER_ORDER.map((layer, i) => [layer, i]));
+// Other names for a layer, in lower case (Physical elements belong to Technology)
+const LAYER_ALIASES = {
+  "implementation & migration": "Implementation", "implementation and migration": "Implementation",
+  implementation_migration: "Implementation", physical: "Technology",
+};
 
-// A layer named in any case ("application", "TECHNOLOGY") is that layer; an unknown or missing one is Other
-function normalizeLayer(layer) {
-  const key = String(layer ?? "").toLowerCase();
-  return LAYER_ORDER.find((l) => l.toLowerCase() === key) ?? "Other";
+// A layer named in any case ("application", "TECHNOLOGY") or by an alias is that layer; a missing or unknown one comes
+// from the element's type, else it is Other
+function normalizeLayer(layer, type) {
+  const key = String(layer ?? "").trim().toLowerCase();
+  return LAYER_ORDER.find((l) => l.toLowerCase() === key) ?? LAYER_ALIASES[key] ?? ELEMENT_TYPES.get(type)?.layer ?? "Other";
 }
 
-// The model's elements, each with a layer the diagram and filter panel know and a type as text ("" when missing)
+// The model's elements, each with a layer the diagram and filter panel know and a type as text ("" when missing). A
+// junction in Other moves to the layer most of the elements it joins share, so it sits between them.
 function modelElements(model) {
-  return (model.get("elements") || []).map((e) => (LAYER_ORDER.includes(e.layer) && typeof e.type === "string"
+  const elements = (model.get("elements") || []).map((e) => (LAYER_ORDER.includes(e.layer) && typeof e.type === "string"
     ? e
-    : { ...e, layer: normalizeLayer(e.layer), type: String(e.type ?? "") }));
+    : { ...e, layer: normalizeLayer(e.layer, String(e.type ?? "")), type: String(e.type ?? "") }));
+  const layerOf = new Map(elements.filter((e) => !isJunction(e.type)).map((e) => [e.id, e.layer]));
+  const votes = new Map();
+  for (const r of model.get("relationships") || []) {
+    for (const [end, other] of [[r.source, r.target], [r.target, r.source]]) {
+      if (!layerOf.has(other)) continue;
+      const count = votes.get(end) ?? new Map();
+      count.set(layerOf.get(other), (count.get(layerOf.get(other)) ?? 0) + 1);
+      votes.set(end, count);
+    }
+  }
+  return elements.map((e) => {
+    if (!isJunction(e.type) || e.layer !== "Other" || !votes.has(e.id)) return e;
+    const [layer] = [...votes.get(e.id)].sort((a, b) => b[1] - a[1] || LAYER_RANK[a[0]] - LAYER_RANK[b[0]])[0];
+    return { ...e, layer };
+  });
 }
+
+// Every ArchiMate 3.2 element type: its layer, filter badge, icon shape and whether it is behavior (rounded corners).
+// Archi writes a junction as "Junction", the Open Exchange Format as "AndJunction" or "OrJunction".
+const ELEMENT_TYPES = new Map([
+  ["Stakeholder", "Motivation", "Sh", "role"], ["Driver", "Motivation", "Dr", "driver"],
+  ["Assessment", "Motivation", "As", "assessment"], ["Goal", "Motivation", "Go", "goal"],
+  ["Outcome", "Motivation", "Oc", "outcome"], ["Principle", "Motivation", "Pr", "principle"],
+  ["Requirement", "Motivation", "Rq", "requirement"], ["Constraint", "Motivation", "Cs", "constraint"],
+  ["Meaning", "Motivation", "Mn", "meaning"], ["Value", "Motivation", "Va", "value"],
+
+  ["Resource", "Strategy", "Rs", "resource"], ["Capability", "Strategy", "Cp", "capability", true],
+  ["ValueStream", "Strategy", "VS", "valueStream", true], ["CourseOfAction", "Strategy", "CA", "courseOfAction", true],
+
+  ["BusinessActor", "Business", "BA", "actor"], ["BusinessRole", "Business", "BR", "role"],
+  ["BusinessCollaboration", "Business", "BCo", "collaboration"], ["BusinessInterface", "Business", "BI", "interface"],
+  ["BusinessProcess", "Business", "BP", "process", true], ["BusinessFunction", "Business", "BF", "function", true],
+  ["BusinessInteraction", "Business", "BX", "interaction", true], ["BusinessEvent", "Business", "BE", "event", true],
+  ["BusinessService", "Business", "BS", "service", true], ["BusinessObject", "Business", "BO", "object"],
+  ["Contract", "Business", "Ct", "contract"], ["Representation", "Business", "Rp", "representation"],
+  ["Product", "Business", "Pd", "product"],
+
+  ["ApplicationComponent", "Application", "AC", "component"], ["ApplicationCollaboration", "Application", "ACo", "collaboration"],
+  ["ApplicationInterface", "Application", "AI", "interface"], ["ApplicationFunction", "Application", "AF", "function", true],
+  ["ApplicationInteraction", "Application", "AX", "interaction", true], ["ApplicationProcess", "Application", "AP", "process", true],
+  ["ApplicationEvent", "Application", "AE", "event", true], ["ApplicationService", "Application", "AS", "service", true],
+  ["DataObject", "Application", "DO", "dataObject"],
+
+  ["Node", "Technology", "Nd", "node"], ["Device", "Technology", "Dv", "device"],
+  ["SystemSoftware", "Technology", "SS", "systemSoftware"], ["TechnologyCollaboration", "Technology", "TCo", "collaboration"],
+  ["TechnologyInterface", "Technology", "TI", "interface"], ["Path", "Technology", "Pa", "path"],
+  ["CommunicationNetwork", "Technology", "CN", "network"], ["TechnologyFunction", "Technology", "TF", "function", true],
+  ["TechnologyProcess", "Technology", "TP", "process", true], ["TechnologyInteraction", "Technology", "TX", "interaction", true],
+  ["TechnologyEvent", "Technology", "TE", "event", true], ["TechnologyService", "Technology", "TS", "service", true],
+  ["Artifact", "Technology", "Ar", "artifact"],
+  ["Equipment", "Technology", "Eq", "equipment"], ["Facility", "Technology", "Fa", "facility"],
+  ["DistributionNetwork", "Technology", "DN", "distribution"], ["Material", "Technology", "Ma", "material"],
+
+  ["WorkPackage", "Implementation", "WP", "workPackage", true], ["Deliverable", "Implementation", "Dl", "deliverable"],
+  ["ImplementationEvent", "Implementation", "IE", "event", true], ["Plateau", "Implementation", "Pl", "plateau"],
+  ["Gap", "Implementation", "Gp", "gap"],
+
+  ["Location", "Other", "Lo", "location"], ["Grouping", "Other", "Gr", "grouping"],
+  ["Junction", "Other", "Jn", "junction"], ["AndJunction", "Other", "Jn", "junction"], ["OrJunction", "Other", "Jn", "junction"],
+].map(([type, layer, badge, icon, behavior = false]) => [type, { layer, badge, icon, behavior }]));
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 50;
+const JUNCTION_SIZE = 12;
 const LAYER_LABEL_PAD = 30;
 
-// Behavior elements get rounded corners; structure/passive get square
-const BEHAVIOR_TYPES = new Set([
-  "ApplicationService", "BusinessProcess", "BusinessFunction", "BusinessEvent", "TechnologyService",
-]);
-function nodeRx(type) { return BEHAVIOR_TYPES.has(type) ? 14 : 4; }
+function nodeRx(type) { return ELEMENT_TYPES.get(type)?.behavior ? 14 : 4; }
+function isJunction(type) { return ELEMENT_TYPES.get(type)?.icon === "junction"; }
+// The size an element takes in the layout: a junction is a small dot that relationships attach to
+function nodeSize(el) { return isJunction(el.type) ? { width: JUNCTION_SIZE, height: JUNCTION_SIZE } : { width: NODE_WIDTH, height: NODE_HEIGHT }; }
 
 // Relationship visual config
 const REL_STYLES = {
@@ -62,91 +132,144 @@ const REL_COLORS = {
 };
 
 // ============================================================================
-// ArchiMate Icons (SVG paths, rendered in 16x14 top-right corner)
+// ArchiMate Icons (SVG shapes in ArchiMate notation, rendered in a 16x14 box in the top-right corner)
 // ============================================================================
 
-const ARCHIMATE_ICONS = {
-  // Business
-  BusinessActor: (g) => {
-    // Stick figure
-    g.appendChild(svgEl("circle", { cx: 8, cy: 3, r: 2.5, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("line", { x1: 8, y1: 5.5, x2: 8, y2: 10, stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("line", { x1: 4, y1: 7, x2: 12, y2: 7, stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("line", { x1: 8, y1: 10, x2: 5, y2: 14, stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("line", { x1: 8, y1: 10, x2: 11, y2: 14, stroke: "currentColor", "stroke-width": 1.2 }));
+const ICON_STROKE = { fill: "none", stroke: "currentColor", "stroke-width": 1.2 };
+const iconPath = (g, d, extra = {}) => g.appendChild(svgEl("path", { d, ...ICON_STROKE, ...extra }));
+const iconCircle = (g, cx, cy, r, extra = {}) => g.appendChild(svgEl("circle", { cx, cy, r, ...ICON_STROKE, ...extra }));
+const iconLine = (g, x1, y1, x2, y2, width = 1.2, extra = {}) =>
+  g.appendChild(svgEl("line", { x1, y1, x2, y2, stroke: "currentColor", "stroke-width": width, ...extra }));
+const iconRect = (g, x, y, width, height, rx = 0, extra = {}) =>
+  g.appendChild(svgEl("rect", { x, y, width, height, rx, ...ICON_STROKE, ...extra }));
+const DOT = { fill: "currentColor", stroke: "none" };
+
+const ICON_SHAPES = {
+  // Active structure
+  actor: (g) => {
+    iconCircle(g, 8, 3, 2.5);
+    iconLine(g, 8, 5.5, 8, 10); iconLine(g, 4, 7, 12, 7);
+    iconLine(g, 8, 10, 5, 14); iconLine(g, 8, 10, 11, 14);
   },
-  BusinessProcess: (g) => {
-    // Right-pointing arrow/chevron
-    g.appendChild(svgEl("path", { d: "M 1 1 L 11 1 L 15 7 L 11 13 L 1 13 L 5 7 Z", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
+  role: (g) => {
+    // A cylinder on its side
+    iconPath(g, "M 12 2 H 4 A 2.5 5 0 0 0 4 12 H 12");
+    g.appendChild(svgEl("ellipse", { cx: 12, cy: 7, rx: 2.5, ry: 5, ...ICON_STROKE }));
   },
-  BusinessFunction: (g) => {
-    // Gear
-    g.appendChild(svgEl("path", { d: "M 7 1 L 9 1 L 9.5 3 L 11.5 3.8 L 13 2.3 L 14.5 3.8 L 13 5.5 L 13.5 7 L 15 7.5 L 15 9.5 L 13.5 9.5 L 13 11 L 14.5 12.5 L 13 14 L 11.5 12.5 L 9.5 13 L 9 15 L 7 15 L 6.5 13 L 4.5 12.5 L 3 14 L 1.5 12.5 L 3 11 L 2.5 9.5 L 1 9.5 L 1 7.5 L 2.5 7 L 3 5.5 L 1.5 3.8 L 3 2.3 L 4.5 3.8 L 6.5 3 Z",
-      fill: "none", stroke: "currentColor", "stroke-width": 0.8, transform: "scale(0.85) translate(1,0)" }));
-    g.appendChild(svgEl("circle", { cx: 8, cy: 7, r: 2.5, fill: "none", stroke: "currentColor", "stroke-width": 0.8 }));
+  collaboration: (g) => { iconCircle(g, 5.8, 7, 4.5); iconCircle(g, 10.2, 7, 4.5); },
+  interface: (g) => { iconCircle(g, 10, 7, 4); iconLine(g, 2, 7, 6, 7); },
+  component: (g) => {
+    iconRect(g, 4, 1, 11, 12, 1);
+    iconRect(g, 1, 3, 5, 3, 0.5, { "stroke-width": 1.0 }); iconRect(g, 1, 8, 5, 3, 0.5, { "stroke-width": 1.0 });
   },
-  BusinessEvent: (g) => {
-    // Signal shape (notched left, pointed right)
-    g.appendChild(svgEl("path", { d: "M 3 1 L 11 1 L 15 7 L 11 13 L 3 13 L 3 1 Z", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("path", { d: "M 3 1 Q 6 7 3 13", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
+  node: (g) => {
+    iconPath(g, "M 1 4 L 5 1 L 15 1 L 15 10 L 11 13 L 1 13 Z");
+    iconLine(g, 1, 4, 11, 4, 1.0); iconLine(g, 11, 4, 15, 1, 1.0); iconLine(g, 11, 4, 11, 13, 1.0);
   },
-  BusinessObject: (g) => {
-    // Rectangle with header line
-    g.appendChild(svgEl("rect", { x: 1, y: 1, width: 14, height: 12, rx: 1, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("line", { x1: 1, y1: 5, x2: 15, y2: 5, stroke: "currentColor", "stroke-width": 1.2 }));
+  device: (g) => {
+    iconPath(g, "M 1 4 L 5 1 L 15 1 L 15 9 L 11 12 L 1 12 Z");
+    iconLine(g, 1, 4, 11, 4, 1.0); iconLine(g, 11, 4, 15, 1, 1.0); iconLine(g, 11, 4, 11, 12, 1.0);
+    iconLine(g, 4, 14, 12, 14, 1.5);
   },
-  // Application
-  ApplicationComponent: (g) => {
-    // Component with two tabs
-    g.appendChild(svgEl("rect", { x: 4, y: 1, width: 11, height: 12, rx: 1, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("rect", { x: 1, y: 3, width: 5, height: 3, rx: 0.5, fill: "none", stroke: "currentColor", "stroke-width": 1.0 }));
-    g.appendChild(svgEl("rect", { x: 1, y: 8, width: 5, height: 3, rx: 0.5, fill: "none", stroke: "currentColor", "stroke-width": 1.0 }));
+  systemSoftware: (g) => { iconCircle(g, 8, 7, 6); iconCircle(g, 8, 7, 3, { "stroke-width": 1.0 }); },
+  path: (g) => {
+    iconLine(g, 2.5, 7, 13.5, 7, 1.2, { "stroke-dasharray": "2 1.5" });
+    iconPath(g, "M 4.5 4 L 1.5 7 L 4.5 10"); iconPath(g, "M 11.5 4 L 14.5 7 L 11.5 10");
   },
-  ApplicationInterface: (g) => {
-    // Lollipop (circle + line)
-    g.appendChild(svgEl("circle", { cx: 10, cy: 7, r: 4, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("line", { x1: 2, y1: 7, x2: 6, y2: 7, stroke: "currentColor", "stroke-width": 1.2 }));
+  network: (g) => {
+    iconPath(g, "M 1.5 11 L 5 3 L 14.5 3 L 11 11 Z");
+    for (const [cx, cy] of [[1.5, 11], [5, 3], [14.5, 3], [11, 11]]) iconCircle(g, cx, cy, 1.4, DOT);
   },
-  ApplicationService: (g) => {
-    // Rounded rectangle
-    g.appendChild(svgEl("rect", { x: 1, y: 2, width: 14, height: 10, rx: 5, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
+  equipment: (g) => {
+    // Two cogs
+    iconCircle(g, 6, 8.5, 3.6, { "stroke-width": 2.2, "stroke-dasharray": "1.4 1.2" });
+    iconCircle(g, 6, 8.5, 1.3, { "stroke-width": 1.0 });
+    iconCircle(g, 12, 3.5, 2.4, { "stroke-width": 1.8, "stroke-dasharray": "1.2 1" });
   },
-  DataObject: (g) => {
-    // Document with folded corner
-    g.appendChild(svgEl("path", { d: "M 1 1 L 11 1 L 15 5 L 15 13 L 1 13 Z", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("path", { d: "M 11 1 L 11 5 L 15 5", fill: "none", stroke: "currentColor", "stroke-width": 1.0 }));
+  facility: (g) => iconPath(g, "M 1 13 V 5 L 5 8 V 5 L 9 8 V 1 H 12.5 V 13 Z"),
+  distribution: (g) => {
+    iconLine(g, 3, 5, 13, 5); iconLine(g, 3, 9, 13, 9);
+    iconPath(g, "M 4 2 L 1 7 L 4 12"); iconPath(g, "M 12 2 L 15 7 L 12 12");
   },
-  // Technology
-  Node: (g) => {
-    // 3D box
-    g.appendChild(svgEl("path", { d: "M 1 4 L 5 1 L 15 1 L 15 10 L 11 13 L 1 13 Z", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("line", { x1: 1, y1: 4, x2: 11, y2: 4, stroke: "currentColor", "stroke-width": 1.0 }));
-    g.appendChild(svgEl("line", { x1: 11, y1: 4, x2: 15, y2: 1, stroke: "currentColor", "stroke-width": 1.0 }));
-    g.appendChild(svgEl("line", { x1: 11, y1: 4, x2: 11, y2: 13, stroke: "currentColor", "stroke-width": 1.0 }));
+  location: (g) => {
+    iconPath(g, "M 8 13.5 C 5 9.5 3 7.5 3 5 A 5 5 0 0 1 13 5 C 13 7.5 11 9.5 8 13.5 Z");
+    iconCircle(g, 8, 5, 1.8, { "stroke-width": 1.0 });
   },
-  Device: (g) => {
-    // Box with pedestal
-    g.appendChild(svgEl("path", { d: "M 1 4 L 5 1 L 15 1 L 15 9 L 11 12 L 1 12 Z", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("line", { x1: 1, y1: 4, x2: 11, y2: 4, stroke: "currentColor", "stroke-width": 1.0 }));
-    g.appendChild(svgEl("line", { x1: 11, y1: 4, x2: 15, y2: 1, stroke: "currentColor", "stroke-width": 1.0 }));
-    g.appendChild(svgEl("line", { x1: 11, y1: 4, x2: 11, y2: 12, stroke: "currentColor", "stroke-width": 1.0 }));
-    g.appendChild(svgEl("line", { x1: 4, y1: 14, x2: 12, y2: 14, stroke: "currentColor", "stroke-width": 1.5 }));
+  // Behavior
+  process: (g) => iconPath(g, "M 1 4.5 H 9 V 1.5 L 15 7 L 9 12.5 V 9.5 H 1 Z"),
+  function: (g) => iconPath(g, "M 2 5 L 8 1 L 14 5 L 14 13 L 8 9 L 2 13 Z"),
+  interaction: (g) => { iconPath(g, "M 7 2 A 5 5 0 0 0 7 12 Z"); iconPath(g, "M 9 2 A 5 5 0 0 1 9 12 Z"); },
+  event: (g) => {
+    iconPath(g, "M 3 1 L 11 1 L 15 7 L 11 13 L 3 13 L 3 1 Z");
+    iconPath(g, "M 3 1 Q 6 7 3 13");
   },
-  SystemSoftware: (g) => {
-    // Circle with inner ring
-    g.appendChild(svgEl("circle", { cx: 8, cy: 7, r: 6, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("circle", { cx: 8, cy: 7, r: 3, fill: "none", stroke: "currentColor", "stroke-width": 1.0 }));
+  service: (g) => iconRect(g, 1, 2, 14, 10, 5),
+  valueStream: (g) => iconPath(g, "M 1 1 L 11 1 L 15 7 L 11 13 L 1 13 L 5 7 Z"),
+  capability: (g) => {
+    // Three steps
+    iconPath(g, "M 1 13 V 9 H 5.5 V 5 H 10 V 1 H 15 V 13 Z");
+    iconLine(g, 5.5, 9, 15, 9, 0.8); iconLine(g, 10, 5, 15, 5, 0.8);
+    iconLine(g, 5.5, 9, 5.5, 13, 0.8); iconLine(g, 10, 5, 10, 13, 0.8);
   },
-  TechnologyService: (g) => {
-    // Rounded rectangle (same as AppService)
-    g.appendChild(svgEl("rect", { x: 1, y: 2, width: 14, height: 10, rx: 5, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
+  courseOfAction: (g) => {
+    iconCircle(g, 11.5, 4, 3); iconCircle(g, 11.5, 4, 1, DOT);
+    iconPath(g, "M 1.5 13.5 Q 2 6.5 8 5.5"); iconPath(g, "M 5.8 3.6 L 8.3 5.4 L 6.3 7.8");
   },
-  Artifact: (g) => {
-    // Page with a folded top-right corner
-    g.appendChild(svgEl("path", { d: "M 3 1 L 10 1 L 13 4 L 13 13 L 3 13 Z", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
-    g.appendChild(svgEl("path", { d: "M 10 1 L 10 4 L 13 4", fill: "none", stroke: "currentColor", "stroke-width": 1.0 }));
+  workPackage: (g) => {
+    // A circular arrow
+    iconPath(g, "M 13.5 7 A 5.5 5.5 0 1 1 9.8 1.8");
+    iconPath(g, "M 7.6 0.4 L 10.1 2 L 8.2 4.4");
+  },
+  // Passive structure and other
+  object: (g) => { iconRect(g, 1, 1, 14, 12, 1); iconLine(g, 1, 5, 15, 5); },
+  contract: (g) => { iconRect(g, 1, 1, 14, 12, 1); iconLine(g, 1, 5, 15, 5); iconLine(g, 1, 9, 15, 9, 1.0); },
+  representation: (g) => { iconPath(g, "M 1 1 H 15 V 11 Q 11.5 8.5 8 11 T 1 11 Z"); iconLine(g, 1, 4.5, 15, 4.5, 1.0); },
+  deliverable: (g) => iconPath(g, "M 1 1 H 15 V 11 Q 11.5 8.5 8 11 T 1 11 Z"),
+  product: (g) => { iconRect(g, 1, 1, 14, 12, 1); iconRect(g, 1, 1, 7, 3.5, 0, { "stroke-width": 1.0 }); },
+  dataObject: (g) => {
+    iconPath(g, "M 1 1 L 11 1 L 15 5 L 15 13 L 1 13 Z");
+    iconPath(g, "M 11 1 L 11 5 L 15 5", { "stroke-width": 1.0 });
+  },
+  artifact: (g) => {
+    iconPath(g, "M 3 1 L 10 1 L 13 4 L 13 13 L 3 13 Z");
+    iconPath(g, "M 10 1 L 10 4 L 13 4", { "stroke-width": 1.0 });
+  },
+  material: (g) => {
+    iconPath(g, "M 4.5 1 H 11.5 L 15 7 L 11.5 13 H 4.5 L 1 7 Z");
+    iconLine(g, 5.5, 3.5, 10.5, 3.5, 0.9); iconLine(g, 5.5, 10.5, 10.5, 10.5, 0.9);
+  },
+  grouping: (g) => iconPath(g, "M 1 4 V 13 H 15 V 4 H 8 V 1 H 1 V 4 H 8", { "stroke-dasharray": "2 1.3" }),
+  plateau: (g) => { iconLine(g, 5, 3, 15, 3, 1.6); iconLine(g, 3, 7, 13, 7, 1.6); iconLine(g, 1, 11, 11, 11, 1.6); },
+  gap: (g) => {
+    g.appendChild(svgEl("ellipse", { cx: 8, cy: 7, rx: 6, ry: 5, ...ICON_STROKE }));
+    iconLine(g, 1, 5.5, 15, 5.5, 0.9); iconLine(g, 1, 8.5, 15, 8.5, 0.9);
+  },
+  // Motivation
+  driver: (g) => {
+    iconCircle(g, 8, 7, 5.5); iconCircle(g, 8, 7, 1.5, DOT);
+    iconLine(g, 8, 0.5, 8, 13.5, 0.9); iconLine(g, 1.5, 7, 14.5, 7, 0.9);
+    iconLine(g, 3.4, 2.4, 12.6, 11.6, 0.9); iconLine(g, 12.6, 2.4, 3.4, 11.6, 0.9);
+  },
+  assessment: (g) => { iconCircle(g, 6.5, 5.5, 4.5); iconLine(g, 9.8, 8.8, 14, 13, 1.8); },
+  goal: (g) => { iconCircle(g, 8, 7, 6); iconCircle(g, 8, 7, 3.5); iconCircle(g, 8, 7, 1.2, DOT); },
+  outcome: (g) => {
+    iconCircle(g, 7, 8, 5.5); iconCircle(g, 7, 8, 3); iconCircle(g, 7, 8, 1, DOT);
+    iconLine(g, 7, 8, 14.5, 0.5, 1.0); iconPath(g, "M 11.5 0.8 L 14.5 0.5 L 14.2 3.5", { "stroke-width": 1.0 });
+  },
+  principle: (g) => { iconRect(g, 3, 1, 10, 12, 1); iconLine(g, 8, 3.5, 8, 8.5, 1.6); iconCircle(g, 8, 10.7, 0.9, DOT); },
+  requirement: (g) => iconPath(g, "M 4 2 H 15 L 12 12 H 1 Z"),
+  constraint: (g) => { iconPath(g, "M 4 2 H 15 L 12 12 H 1 Z"); iconLine(g, 7, 2, 4, 12, 1.0); },
+  meaning: (g) => iconPath(g, "M 4.5 12 A 3 3 0 0 1 3 6.5 A 3.5 3.5 0 0 1 9 3.5 A 3 3 0 0 1 14 6.5 A 3 3 0 0 1 12 12 Z"),
+  value: (g) => g.appendChild(svgEl("ellipse", { cx: 8, cy: 7, rx: 6.5, ry: 4.5, ...ICON_STROKE })),
+  resource: (g) => {
+    // A battery
+    iconRect(g, 1, 3, 12, 8, 1.5); iconRect(g, 13, 5.5, 2, 3, 0, { "stroke-width": 1.0 });
+    for (const x of [4, 7, 10]) iconLine(g, x, 5, x, 9, 1.0);
   },
 };
+
+// The icon drawing for an element type, if it has one (a junction is drawn on its own)
+function iconFor(type) { return ICON_SHAPES[ELEMENT_TYPES.get(type)?.icon]; }
 
 // ============================================================================
 // SVG Helpers
@@ -481,7 +604,7 @@ function computeLayout(elements, relationships, nestElements) {
 
       for (const el of connected) {
         const isP = parentIds.has(el.id);
-        const sz = isP ? containerSize(el.id) : { width: NODE_WIDTH, height: NODE_HEIGHT };
+        const sz = isP ? containerSize(el.id) : nodeSize(el);
         g.setNode(el.id, { label: el.name, width: sz.width, height: sz.height });
       }
       for (const { src, tgt, rel } of withinEdges) {
@@ -512,7 +635,7 @@ function computeLayout(elements, relationships, nestElements) {
 
       for (const el of disconnected) {
         const isP = parentIds.has(el.id);
-        const sz = isP ? containerSize(el.id) : { width: NODE_WIDTH, height: NODE_HEIGHT };
+        const sz = isP ? containerSize(el.id) : nodeSize(el);
         nodePositions.set(el.id, {
           x: rowX + sz.width / 2, y: startY + sz.height / 2,
           width: sz.width, height: sz.height,
@@ -724,7 +847,7 @@ function computeLayout(elements, relationships, nestElements) {
     if (!sp || !tp) continue;
     const se = elemById.get(src), te = elemById.get(tgt);
     if (!se || !te) continue;
-    const sL = LAYER_RANK[se.layer] ?? 3, tL = LAYER_RANK[te.layer] ?? 3;
+    const sL = LAYER_RANK[se.layer] ?? LAYER_RANK.Other, tL = LAYER_RANK[te.layer] ?? LAYER_RANK.Other;
 
     edgeInfos.push({ src, tgt, sp, tp, sL, tL, rel });
 
@@ -898,7 +1021,7 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   mainG.appendChild(nodesG);
   for (const [id, nd] of layout.nodes) {
     const el = elements.find((e) => e.id === id);
-    if (el && !nd._isParent) drawNode(nodesG, nd, el, darkMode);
+    if (el && !nd._isParent) (isJunction(el.type) ? drawJunction : drawNode)(nodesG, nd, el, darkMode);
   }
 
   container.appendChild(svg);
@@ -946,9 +1069,9 @@ function drawNode(parentG, nd, el, darkMode) {
   }));
 
   // ArchiMate icon (top-right)
-  const iconFn = ARCHIMATE_ICONS[el.type];
+  const iconFn = iconFor(el.type);
   if (iconFn) {
-    const iconG = svgEl("g", { transform: `translate(${NODE_WIDTH - 20}, 2)`, color: c.text, opacity: "0.7" });
+    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${NODE_WIDTH - 20}, 2)`, color: c.text, opacity: "0.7" });
     iconFn(iconG);
     group.appendChild(iconG);
   }
@@ -983,6 +1106,20 @@ function drawNode(parentG, nd, el, darkMode) {
   parentG.appendChild(group);
 }
 
+// A junction is a small dot, filled for And and hollow for Or
+function drawJunction(parentG, nd, el, darkMode) {
+  const color = darkMode ? "#d1d5db" : "#333333";
+  const group = svgEl("g", { class: `aam-node aam-junction ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${nd.x}, ${nd.y})` });
+  const or = el.type === "OrJunction";
+  group.appendChild(svgEl("circle", {
+    r: JUNCTION_SIZE / 2, fill: or ? "none" : color, stroke: color, "stroke-width": "1.5", "pointer-events": "all",
+  }));
+  const title = svgEl("title");
+  title.textContent = [el.name, formatType(el.type), el.documentation].filter(Boolean).join("\n");
+  group.appendChild(title);
+  parentG.appendChild(group);
+}
+
 function drawContainerNode(parentG, nd, el, darkMode) {
   const c = LAYER_COLORS[el.layer] || LAYER_COLORS.Other;
   const w = nd.width, h = nd.height, x = nd.x - w / 2, y = nd.y - h / 2;
@@ -1002,9 +1139,9 @@ function drawContainerNode(parentG, nd, el, darkMode) {
   group.appendChild(text);
 
   // Icon
-  const iconFn = ARCHIMATE_ICONS[el.type];
+  const iconFn = iconFor(el.type);
   if (iconFn) {
-    const iconG = svgEl("g", { transform: `translate(${w - 20}, 3)`, color: c.text, opacity: "0.7" });
+    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${w - 20}, 3)`, color: c.text, opacity: "0.7" });
     iconFn(iconG);
     group.appendChild(iconG);
   }
@@ -1093,11 +1230,7 @@ function formatType(type) {
 }
 
 function getTypeBadge(type) {
-  return ({
-    ApplicationComponent: "AC", ApplicationInterface: "AI", ApplicationService: "AS", DataObject: "DO",
-    BusinessActor: "BA", BusinessProcess: "BP", BusinessFunction: "BF", BusinessEvent: "BE", BusinessObject: "BO",
-    Node: "Nd", Device: "Dv", SystemSoftware: "SS", TechnologyService: "TS", Artifact: "Ar",
-  })[type] || "";
+  return ELEMENT_TYPES.get(type)?.badge ?? "";
 }
 
 // ============================================================================
@@ -1167,11 +1300,7 @@ function render({ model, el }) {
   toolbar.innerHTML = `
     <button class="aam-btn aam-btn-filter" title="Toggle filter panel">&#9776;</button>
     <span class="aam-title">ArchiMate Model</span>
-    <span class="aam-legend">
-      <span class="aam-legend-item"><span class="aam-dot" style="background:#FFFFB5;border-color:#C8C800"></span>Business</span>
-      <span class="aam-legend-item"><span class="aam-dot" style="background:#B5FFFF;border-color:#00B2B2"></span>Application</span>
-      <span class="aam-legend-item"><span class="aam-dot" style="background:#C9E7B7;border-color:#5BA83B"></span>Technology</span>
-    </span>
+    <span class="aam-legend"></span>
     <input type="file" class="aam-file-input" accept=".xml,.archimate" style="display:none">
     <button class="aam-btn aam-btn-upload" title="Upload .xml or .archimate file">Upload</button>
     <button class="aam-btn aam-btn-export-svg" title="Export as SVG">SVG</button>
@@ -1195,8 +1324,9 @@ function render({ model, el }) {
 
   const graphContainer = document.createElement("div");
   graphContainer.className = "aam-graph-container";
-  graphContainer.style.height = model.get("height") + "px";
   contentArea.appendChild(graphContainer);
+  // The height sizes the row of filter panel and diagram: the diagram stretches to it and a long panel scrolls
+  contentArea.style.height = model.get("height") + "px";
 
   const details = document.createElement("div");
   details.className = "aam-details"; details.style.display = "none";
@@ -1213,7 +1343,20 @@ function render({ model, el }) {
   // The fitted viewBox and layout key of the diagram on screen
   let fitView = null, shownKey = null;
 
+  // Toolbar legend: the layers in the model, in band order
+  function updateLegend() {
+    const present = new Set(modelElements(model).map((e) => e.layer));
+    toolbar.querySelector(".aam-legend").replaceChildren(...LAYER_ORDER.filter((l) => present.has(l)).map((layer) => {
+      const item = document.createElement("span"); item.className = "aam-legend-item";
+      const dot = document.createElement("span"); dot.className = "aam-dot";
+      dot.style.background = LAYER_COLORS[layer].fill; dot.style.borderColor = LAYER_COLORS[layer].stroke;
+      item.append(dot, layer);
+      return item;
+    }));
+  }
+
   function rebuildDiagram() {
+    updateLegend();
     const dm = model.get("dark_mode");
     wrapper.classList.toggle("aam-dark", dm);
     const { elements, relationships } = getFilteredData();
@@ -1322,7 +1465,7 @@ function render({ model, el }) {
     ["change:dark_mode", onDarkModeChange],
     ["change:selected_element", applyMarks],
     ["change:highlight_ids", applyMarks],
-    ["change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); }],
+    ["change:height", () => { contentArea.style.height = model.get("height") + "px"; rebuildDiagram(); }],
   ];
   for (const [event, fn] of listeners) model.on(event, fn);
   rebuildDiagram();

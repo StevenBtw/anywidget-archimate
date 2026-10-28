@@ -2,14 +2,17 @@
 
 Interactive ArchiMate model viewer for Jupyter, Marimo, and VS Code notebooks.
 
-Renders ArchiMate models from Open Exchange Format XML or Archi `.archimate` files, or from Python data, with a layered layout:
+Renders ArchiMate models from Open Exchange Format XML or Archi `.archimate` files, or from Python data, in layer bands from top to bottom:
 
-- **Yellow:** Business layer (top)
-- **Blue:** Application layer (middle)
-- **Green:** Technology layer (bottom)
-- **Grey:** Other (any other layer)
+- **Lilac:** Motivation
+- **Tan:** Strategy
+- **Yellow:** Business
+- **Blue:** Application
+- **Green:** Technology, including the Physical elements
+- **Pink:** Implementation & Migration
+- **Grey:** Other (Location, Grouping, and any other layer)
 
-Draws all 11 ArchiMate relationship types with their notation, and nests elements joined by Composition or Aggregation.
+A band only appears when the model has elements in it. Every ArchiMate 3.2 element type is drawn with its notation icon, junctions as small dots (filled for And, hollow for Or) in the band of the elements they join, and all 11 relationship types with their notation. Elements joined by Composition or Aggregation are nested.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/StevenBtw/anywidget-archimate/main/assets/archimate-dark.png">
@@ -54,8 +57,8 @@ widget = ArchiMate(
 )
 ```
 
-- `layer` is `Business`, `Application`, `Technology` or `Other`, in any case; an element with another or no layer is drawn under Other.
-- `type` is an ArchiMate element type such as `BusinessProcess` or `DataObject`; types without their own icon draw as a plain box.
+- `layer` is `Motivation`, `Strategy`, `Business`, `Application`, `Technology`, `Implementation` or `Other`, in any case; `Implementation & Migration` and `Physical` (Technology) work too. Without a layer, or with one the widget does not know, the element goes to the layer of its type, else to Other.
+- `type` is an ArchiMate 3.2 element type such as `BusinessProcess`, `Capability`, `Goal` or `WorkPackage`; a junction is `AndJunction` or `OrJunction`. Other types draw as a plain box.
 - Relationship `type` is one of `Composition`, `Aggregation`, `Assignment`, `Realization`, `Serving`, `Access`, `Influence`, `Triggering`, `Flow`, `Specialization` or `Association`.
 - Names, documentation and the other values are shown as text, never as HTML.
 

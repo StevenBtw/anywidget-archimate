@@ -96,9 +96,10 @@
 }
 
 /* Content area: sidebar + graph */
+/* Sized by the height trait (set in render), so a long filter panel scrolls instead of stretching the widget */
 .aam-content {
   display: flex;
-  flex: 1;
+  flex: none;
   min-height: 0;
   overflow: hidden;
 }
