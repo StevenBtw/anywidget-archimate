@@ -11,6 +11,24 @@ from anywidget_archimate.parser import parse_xml
 from anywidget_archimate.ui import get_css, get_esm
 
 
+class _ChosenBool(traitlets.Bool):
+    """A theme trait that records a choice in its `flag` trait whenever Python assigns it.
+
+    Assigning the value the trait already has counts too: `widget.dark_mode = True` on a dark page keeps the widget
+    dark after the page turns light. Values the widget writes from the browser arrive through `set_state` and are not
+    a choice. Shared with anywidget-graph and anywidget-vector.
+    """
+
+    def __init__(self, *args, flag: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.flag = flag
+
+    def set(self, obj, value):
+        super().set(obj, value)
+        if not obj._applying_frontend_state:
+            obj.set_trait(self.flag, True)
+
+
 class ArchiMate(anywidget.AnyWidget):
     """Interactive ArchiMate model viewer widget.
 
@@ -31,9 +49,11 @@ class ArchiMate(anywidget.AnyWidget):
     # Display settings
     width = traitlets.Unicode(default_value="100%").tag(sync=True)
     height = traitlets.Int(default_value=700).tag(sync=True)
-    dark_mode = traitlets.Bool(default_value=True).tag(sync=True)
+    dark_mode = _ChosenBool(default_value=True, flag="_theme_explicit").tag(sync=True)
     # True once dark_mode is chosen (given here, set from Python or the toolbar): the widget stops following the page
     _theme_explicit = traitlets.Bool(default_value=False).tag(sync=True)
+    # True while state from the browser is applied (see set_state)
+    _applying_frontend_state = False
 
     # Interaction state: a click sets selected_element to the element's dict; the host may set a dict
     # with at least the id, such as {"id": "n1"} (not the bare id), to outline that element
@@ -45,9 +65,19 @@ class ArchiMate(anywidget.AnyWidget):
     _upload_xml = traitlets.Unicode(default_value="").tag(sync=True)
 
     def __init__(self, **kwargs):
-        if kwargs.get("dark_mode") is not None:
-            kwargs.setdefault("_theme_explicit", True)
+        # dark_mode=None means "follow the page", like leaving it out
+        if "dark_mode" in kwargs and kwargs["dark_mode"] is None:
+            del kwargs["dark_mode"]
         super().__init__(**kwargs)
+
+    def set_state(self, sync_data):
+        """Apply state from the browser (Jupyter and marimo both call this): a dark_mode it carries is the widget
+        following the page, or a choice the browser already recorded in _theme_explicit, not a choice made in Python."""
+        self._applying_frontend_state = True
+        try:
+            super().set_state(sync_data)
+        finally:
+            self._applying_frontend_state = False
 
     @traitlets.observe("_upload_xml")
     def _on_upload_xml(self, change):

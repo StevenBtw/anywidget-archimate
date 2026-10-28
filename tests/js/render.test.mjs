@@ -430,3 +430,45 @@ test("a dark_mode the host sets after render stops following the page, also for 
     close();
   }
 });
+
+test("two views of one widget both keep following the page", { skip }, async () => {
+  const { dom, model, close } = await mount({ htmlAttrs: 'data-theme="dark"' });
+  const { default: widget } = await import(pathToFileURL(MODULE).href);
+  const second = dom.window.document.createElement("div");
+  dom.window.document.body.appendChild(second);
+  const cleanupSecond = widget.render({ model, el: second });
+  try {
+    const html = dom.window.document.documentElement;
+    for (const [theme, dark] of [["light", false], ["dark", true]]) {
+      html.dataset.theme = theme;
+      await settle();
+      assert.equal(model.get("dark_mode"), dark, `follows data-theme="${theme}"`);
+    }
+    assert.equal(model.get("_theme_explicit"), undefined);
+  } finally {
+    cleanupSecond();
+    close();
+  }
+});
+
+test("views from two copies of the module, each with its own model proxy, keep following the page", { skip }, async () => {
+  const { dom, model, close } = await mount({ htmlAttrs: 'data-theme="dark"' });
+  // A second copy of the module (a cell run again, a reconnect) and a per-view proxy, as anywidget hands each view
+  const { default: copy } = await import(`${pathToFileURL(MODULE).href}?copy=2`);
+  const proxy = { ...model, get: (k) => model.get(k), set: (k, v) => model.set(k, v), on: (e, f) => model.on(e, f), off: (e, f) => model.off(e, f) };
+  const second = dom.window.document.createElement("div");
+  dom.window.document.body.appendChild(second);
+  const cleanupSecond = copy.render({ model: proxy, el: second });
+  try {
+    const html = dom.window.document.documentElement;
+    for (const [theme, dark] of [["light", false], ["dark", true]]) {
+      html.dataset.theme = theme;
+      await settle();
+      assert.equal(model.get("dark_mode"), dark, `follows data-theme="${theme}"`);
+    }
+    assert.equal(model.get("_theme_explicit"), undefined);
+  } finally {
+    cleanupSecond();
+    close();
+  }
+});

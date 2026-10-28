@@ -262,8 +262,7 @@ def _parse_archi_relationship(elem: ET.Element) -> dict | None:
 
     # "archimate:FlowRelationship" -> "Flow"
     rel_type = _strip_archi_prefix(xsi_type_raw)
-    if rel_type.endswith(_ARCHI_REL_SUFFIX):
-        rel_type = rel_type[: -len(_ARCHI_REL_SUFFIX)]
+    rel_type = rel_type.removesuffix(_ARCHI_REL_SUFFIX)
 
     name = elem.get("name", "")
 

@@ -85,3 +85,35 @@ def test_a_dark_mode_given_to_the_widget_is_explicit():
     assert ArchiMate(dark_mode=False)._theme_explicit is True
     assert ArchiMate.from_xml(ROOT / "examples" / "sample.xml", dark_mode=True)._theme_explicit is True
     assert ArchiMate.from_xml(ROOT / "examples" / "sample.xml")._theme_explicit is False
+
+
+def test_a_dark_mode_set_from_python_is_explicit_but_the_pages_theme_is_not():
+    from anywidget_archimate import ArchiMate
+
+    widget = ArchiMate()
+    widget.dark_mode = False
+    assert widget._theme_explicit is True
+
+    # What the browser sends while it follows the page
+    following = ArchiMate()
+    following.set_state({"dark_mode": False})
+    assert following.dark_mode is False
+    assert following._theme_explicit is False
+
+
+def test_assigning_the_current_dark_mode_is_still_a_choice():
+    from anywidget_archimate import ArchiMate
+
+    # On a dark page dark_mode already reads True; setting True means "keep it dark"
+    widget = ArchiMate()
+    widget.set_state({"dark_mode": True})
+    widget.dark_mode = True
+    assert widget._theme_explicit is True
+
+
+def test_dark_mode_none_follows_the_page():
+    from anywidget_archimate import ArchiMate
+
+    widget = ArchiMate(dark_mode=None)
+    assert widget._theme_explicit is False
+    assert widget.dark_mode is True

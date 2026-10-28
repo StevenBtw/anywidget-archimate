@@ -1104,6 +1104,11 @@ function getTypeBadge(type) {
 // Anywidget Render
 // ============================================================================
 
+// Above 0 while a view writes the page's theme into dark_mode. It lives on globalThis, not in this module, so views
+// from another copy of the module (a cell run again, a reconnect) ignore the write too; anywidget-graph and
+// anywidget-vector use the same key, which is harmless since it is only above 0 during a synchronous write.
+const THEME_WRITES = Symbol.for("anywidget.theme-writes");
+
 function render({ model, el }) {
   const wrapper = document.createElement("div");
   wrapper.className = "aam-wrapper";
@@ -1122,24 +1127,24 @@ function render({ model, el }) {
   }
 
   // Follow the page's theme until dark_mode is chosen: given from Python (_theme_explicit), set by the host later, or
-  // switched in the toolbar. The widget's own updates while following are not a choice.
-  let followingPage = false;
+  // switched in the toolbar. The widget's own updates while following are not a choice (THEME_WRITES, seen by every
+  // view, since another view of the same widget sees this view's update too).
   function syncTheme() {
     if (model.get("_theme_explicit")) return;
     const dark = detectHostDark();
     if (model.get("dark_mode") !== dark) {
-      followingPage = true;
+      globalThis[THEME_WRITES] = (globalThis[THEME_WRITES] ?? 0) + 1;
       try {
         model.set("dark_mode", dark);
       } finally {
-        followingPage = false;
+        globalThis[THEME_WRITES] -= 1;
       }
       model.save_changes();
     }
   }
   // Any other change to dark_mode is a choice; it is kept in the model, so later views of the widget respect it too
   function onDarkModeChange() {
-    if (followingPage || model.get("_theme_explicit")) return;
+    if ((globalThis[THEME_WRITES] ?? 0) > 0 || model.get("_theme_explicit")) return;
     model.set("_theme_explicit", true);
     model.save_changes();
   }
