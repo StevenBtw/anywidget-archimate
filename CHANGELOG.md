@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1] - (2026-10-28)
+
+### Fixes
+
+- **One widget shown twice keeps following the page**: When the same widget was displayed in two places (two cells, or a cell and a sidebar), one view took the other's automatic theme update for a choice, and both stopped following the page after its first theme change. The guard for the widget's own updates is now seen by every view, also views from another copy of the module (a cell run again, a reconnect); it is the same guard anywidget-graph and anywidget-vector use
+- **`dark_mode` set from Python is always kept**: `widget = ArchiMate(); widget.dark_mode = False`, then showing `widget`, rendered in the page's theme; only `dark_mode` given to the constructor was kept. Assigning `dark_mode` from Python now counts as a choice at any time, including the value it already has (`widget.dark_mode = True` on a dark page keeps it dark when the page turns light), while the browser's own updates (which arrive through `set_state`) still do not
+- **`dark_mode=None`**: Means "follow the page", like leaving it out; before, it raised a `TraitError`
+
 ## [0.4.0] - (2026-10-28)
 
 ### Security
