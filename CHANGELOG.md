@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1] - (2026-10-28)
+
+### Improvements
+
+- **CI actions**: The workflows use `actions/checkout` v7, `astral-sh/setup-uv` v10 and `actions/setup-node` v7 (was v4 for all three), which run on Node 24
+- **JavaScript test dependency**: jsdom 30.1.3 (was 29.1.1) for the render tests; it needs Node 22.22.2 or newer, which CI's Node 22 provides
+- **Example notebook**: `examples/demo_marimo.py` is marked as written with marimo 0.25.2, the version the `examples` extra now requires
+
 ## [0.5.0] - (2026-10-28)
 
 ### New Features
