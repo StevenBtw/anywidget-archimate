@@ -291,3 +291,44 @@ test("a light class on the page wins over a dark operating system", { skip }, as
     close();
   }
 });
+
+test("the details panel shows markup in element data as text, not as HTML", { skip }, async () => {
+  const hostile = {
+    id: "<b>id</b>",
+    name: "<img src=x onerror=alert(1)>",
+    type: "ApplicationComponent",
+    layer: "Application",
+    documentation: "<script>bad()</script>",
+  };
+  const { dom, el, close } = await mount({ values: { elements: [hostile], relationships: [] } });
+  try {
+    const node = [...el.querySelectorAll(".aam-node")].find((n) => n.dataset.id === hostile.id);
+    node.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    const details = el.querySelector(".aam-details");
+    assert.equal(details.style.display, "block");
+    assert.equal(details.querySelectorAll("img, b, script").length, 0);
+    for (const value of [hostile.id, hostile.name, hostile.layer, hostile.documentation]) {
+      assert.ok(details.textContent.includes(value), `details text holds ${value} literally`);
+    }
+  } finally {
+    close();
+  }
+});
+
+test("layer names match in any case, and an unknown or missing layer draws under Other", { skip }, async () => {
+  const elements = [
+    { id: "x1", name: "Web shop", type: "ApplicationComponent", layer: "application", documentation: "" },
+    { id: "x2", name: "App server", type: "Node", layer: "TECHNOLOGY", documentation: "" },
+    { id: "x3", name: "Growth", type: "Capability", layer: "Strategy", documentation: "" },
+    { id: "x4", name: "Loose", type: "Node", documentation: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships: [] } });
+  try {
+    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id).sort();
+    assert.deepEqual(ids, ["x1", "x2", "x3", "x4"]);
+    const bands = [...el.querySelectorAll(".aam-layer-label")].map((label) => label.textContent).sort();
+    assert.deepEqual(bands, ["Application Layer", "Other Layer", "Technology Layer"]);
+  } finally {
+    close();
+  }
+});

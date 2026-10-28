@@ -16,6 +16,17 @@ const LAYER_COLORS = {
 const LAYER_ORDER = ["Business", "Application", "Technology", "Other"];
 const LAYER_RANK = { Business: 0, Application: 1, Technology: 2, Other: 3 };
 
+// A layer named in any case ("application", "TECHNOLOGY") is that layer; an unknown or missing one is Other
+function normalizeLayer(layer) {
+  const key = String(layer ?? "").toLowerCase();
+  return LAYER_ORDER.find((l) => l.toLowerCase() === key) ?? "Other";
+}
+
+// The model's elements, each with a layer the diagram and filter panel know
+function modelElements(model) {
+  return (model.get("elements") || []).map((e) => (LAYER_ORDER.includes(e.layer) ? e : { ...e, layer: normalizeLayer(e.layer) }));
+}
+
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 50;
 const LAYER_LABEL_PAD = 30;
@@ -128,6 +139,11 @@ const ARCHIMATE_ICONS = {
     // Rounded rectangle (same as AppService)
     g.appendChild(svgEl("rect", { x: 1, y: 2, width: 14, height: 10, rx: 5, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
   },
+  Artifact: (g) => {
+    // Page with a folded top-right corner
+    g.appendChild(svgEl("path", { d: "M 3 1 L 10 1 L 13 4 L 13 13 L 3 13 Z", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
+    g.appendChild(svgEl("path", { d: "M 10 1 L 10 4 L 13 4", fill: "none", stroke: "currentColor", "stroke-width": 1.0 }));
+  },
 };
 
 // ============================================================================
@@ -219,7 +235,7 @@ function buildFilterPanel(model, onFilterChange) {
 
   function renderPanel() {
     panel.innerHTML = "";
-    const elements = model.get("elements") || [];
+    const elements = modelElements(model);
     const relationships = model.get("relationships") || [];
 
     const header = document.createElement("div");
@@ -1076,7 +1092,7 @@ function getTypeBadge(type) {
   return ({
     ApplicationComponent: "AC", ApplicationInterface: "AI", ApplicationService: "AS", DataObject: "DO",
     BusinessActor: "BA", BusinessProcess: "BP", BusinessFunction: "BF", BusinessEvent: "BE", BusinessObject: "BO",
-    Node: "Nd", Device: "Dv", SystemSoftware: "SS", TechnologyService: "TS",
+    Node: "Nd", Device: "Dv", SystemSoftware: "SS", TechnologyService: "TS", Artifact: "Ar",
   })[type] || "";
 }
 
@@ -1168,7 +1184,7 @@ function render({ model, el }) {
   wrapper.appendChild(details);
 
   function getFilteredData() {
-    const ae = model.get("elements") || [], ar = model.get("relationships") || [];
+    const ae = modelElements(model), ar = model.get("relationships") || [];
     const els = ae.filter((e) => !hiddenLayers.has(e.layer) && !hiddenElemTypes.has(e.type));
     const vis = new Set(els.map((e) => e.id));
     const rels = ar.filter((r) => !hiddenRelTypes.has(r.type) && vis.has(r.source) && vis.has(r.target));
@@ -1303,13 +1319,25 @@ function render({ model, el }) {
 
 function showDetails(container, el) {
   container.style.display = "block";
+  // Fixed markup only: model values go in as text, so markup in a name or documentation stays inert
   container.innerHTML = `
-    <div class="aam-details-header"><strong>${el.name}</strong><button class="aam-btn aam-details-close">&times;</button></div>
-    <div class="aam-details-body">
-      <div><span class="aam-detail-label">Type:</span> ${formatType(el.type)}</div>
-      <div><span class="aam-detail-label">Layer:</span> ${el.layer}</div>
-      <div><span class="aam-detail-label">ID:</span> <code>${el.id}</code></div>
-      ${el.documentation ? `<div class="aam-detail-doc">${el.documentation}</div>` : ""}
-    </div>`;
+    <div class="aam-details-header"><strong></strong><button class="aam-btn aam-details-close">&times;</button></div>
+    <div class="aam-details-body"></div>`;
+  container.querySelector(".aam-details-header strong").textContent = el.name ?? "";
+  const body = container.querySelector(".aam-details-body");
+  const row = (label, value) => {
+    const div = document.createElement("div");
+    const lbl = document.createElement("span"); lbl.className = "aam-detail-label"; lbl.textContent = `${label}:`;
+    div.append(lbl, " ", value);
+    body.appendChild(div);
+  };
+  row("Type", formatType(el.type));
+  row("Layer", el.layer ?? "");
+  const code = document.createElement("code"); code.textContent = el.id ?? "";
+  row("ID", code);
+  if (el.documentation) {
+    const doc = document.createElement("div"); doc.className = "aam-detail-doc"; doc.textContent = el.documentation;
+    body.appendChild(doc);
+  }
   container.querySelector(".aam-details-close").addEventListener("click", () => { container.style.display = "none"; });
 }
