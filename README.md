@@ -3,6 +3,7 @@
 Interactive ArchiMate model viewer for Jupyter, Marimo, and VS Code notebooks.
 
 Renders ArchiMate models from Open Exchange Format XML or Archi `.archimate` files, or from Python data, with a layered layout:
+
 - **Yellow:** Business layer (top)
 - **Blue:** Application layer (middle)
 - **Green:** Technology layer (bottom)
@@ -84,7 +85,7 @@ To show several runs of one model, give elements and relationships an optional `
 
 ### Toolbar
 
-The toolbar opens the filter panel (hide layers, element types and relationship types, or turn off nesting), uploads an `.xml` or `.archimate` file, exports the diagram as SVG or PNG, fits the diagram to the view and switches between light and dark. The theme follows the host page (marimo, Jupyter, VS Code, or the operating system) until you switch it with the toolbar.
+The toolbar opens the filter panel (hide layers, element types and relationship types, or turn off nesting), uploads an `.xml` or `.archimate` file, exports the diagram as SVG or PNG, fits the diagram to the view and switches between light and dark. The theme follows the host page (marimo, Jupyter, VS Code, or the operating system) unless you choose one: pass `dark_mode=True` or `dark_mode=False`, set `widget.dark_mode`, or use the toolbar switch.
 
 ## Development
 

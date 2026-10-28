@@ -381,3 +381,52 @@ test("layer band labels switch to the brighter layer color in dark mode", { skip
     close();
   }
 });
+
+test("a dark_mode passed from Python wins over the page theme and stays when the page changes", { skip }, async () => {
+  const { dom, model, el, close } = await mount({
+    values: { dark_mode: false, _theme_explicit: true },
+    body: '<section id="pane" data-theme="dark"><div id="host"></div></section>',
+  });
+  try {
+    assert.equal(model.get("dark_mode"), false);
+    assert.equal(el.querySelector(".aam-wrapper").classList.contains("aam-dark"), false);
+    dom.window.document.querySelector("#pane").dataset.theme = "light";
+    await settle();
+    dom.window.document.querySelector("#pane").dataset.theme = "dark";
+    await settle();
+    assert.equal(model.get("dark_mode"), false);
+  } finally {
+    close();
+  }
+});
+
+test("following the page continues after the widget's own theme updates", { skip }, async () => {
+  const { dom, model, close } = await mount({ body: '<section id="pane" data-theme="dark"><div id="host"></div></section>' });
+  try {
+    const pane = dom.window.document.querySelector("#pane");
+    for (const [theme, dark] of [["light", false], ["dark", true], ["light", false]]) {
+      pane.dataset.theme = theme;
+      await settle();
+      assert.equal(model.get("dark_mode"), dark, `follows data-theme="${theme}"`);
+    }
+    assert.equal(model.get("_theme_explicit"), undefined);
+  } finally {
+    close();
+  }
+});
+
+test("a dark_mode the host sets after render stops following the page, also for later views", { skip }, async () => {
+  const { dom, model, close } = await mount({ body: '<section id="pane" data-theme="dark"><div id="host"></div></section>' });
+  try {
+    model.set("dark_mode", false);
+    assert.equal(model.get("_theme_explicit"), true);
+    const pane = dom.window.document.querySelector("#pane");
+    pane.dataset.theme = "light";
+    await settle();
+    pane.dataset.theme = "dark";
+    await settle();
+    assert.equal(model.get("dark_mode"), false);
+  } finally {
+    close();
+  }
+});

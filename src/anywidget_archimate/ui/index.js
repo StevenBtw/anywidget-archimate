@@ -1121,19 +1121,29 @@ function render({ model, el }) {
     return resolveDark({ theme, darkClass, lightClass, prefersDark });
   }
 
-  // Always auto-detect and observe theme changes
-  let autoTheme = true;
-  model.set("dark_mode", detectHostDark());
-  model.save_changes();
-
+  // Follow the page's theme until dark_mode is chosen: given from Python (_theme_explicit), set by the host later, or
+  // switched in the toolbar. The widget's own updates while following are not a choice.
+  let followingPage = false;
   function syncTheme() {
-    if (!autoTheme) return;
+    if (model.get("_theme_explicit")) return;
     const dark = detectHostDark();
     if (model.get("dark_mode") !== dark) {
-      model.set("dark_mode", dark);
+      followingPage = true;
+      try {
+        model.set("dark_mode", dark);
+      } finally {
+        followingPage = false;
+      }
       model.save_changes();
     }
   }
+  // Any other change to dark_mode is a choice; it is kept in the model, so later views of the widget respect it too
+  function onDarkModeChange() {
+    if (followingPage || model.get("_theme_explicit")) return;
+    model.set("_theme_explicit", true);
+    model.save_changes();
+  }
+  syncTheme();
 
   // data-theme anywhere in the page (any ancestor of the widget may carry it), plus html and body classes and style
   const themeObserver = new MutationObserver(syncTheme);
@@ -1235,7 +1245,7 @@ function render({ model, el }) {
     const s = graphContainer.querySelector("svg.aam-svg");
     if (s && fitView) s.setAttribute("viewBox", fitView);
   });
-  toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { autoTheme = false; model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
+  toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
 
   // Upload
   const fileInput = toolbar.querySelector(".aam-file-input");
@@ -1304,6 +1314,7 @@ function render({ model, el }) {
     ["change:elements", rebuildDiagram],
     ["change:relationships", rebuildDiagram],
     ["change:dark_mode", rebuildDiagram],
+    ["change:dark_mode", onDarkModeChange],
     ["change:selected_element", applyMarks],
     ["change:highlight_ids", applyMarks],
     ["change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); }],

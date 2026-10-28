@@ -32,6 +32,8 @@ class ArchiMate(anywidget.AnyWidget):
     width = traitlets.Unicode(default_value="100%").tag(sync=True)
     height = traitlets.Int(default_value=700).tag(sync=True)
     dark_mode = traitlets.Bool(default_value=True).tag(sync=True)
+    # True once dark_mode is chosen (given here, set from Python or the toolbar): the widget stops following the page
+    _theme_explicit = traitlets.Bool(default_value=False).tag(sync=True)
 
     # Interaction state: a click sets selected_element to the element's dict; the host may set a dict
     # with at least the id, such as {"id": "n1"} (not the bare id), to outline that element
@@ -41,6 +43,11 @@ class ArchiMate(anywidget.AnyWidget):
 
     # File upload (browser → Python)
     _upload_xml = traitlets.Unicode(default_value="").tag(sync=True)
+
+    def __init__(self, **kwargs):
+        if kwargs.get("dark_mode") is not None:
+            kwargs.setdefault("_theme_explicit", True)
+        super().__init__(**kwargs)
 
     @traitlets.observe("_upload_xml")
     def _on_upload_xml(self, change):

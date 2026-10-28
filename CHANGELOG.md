@@ -20,6 +20,7 @@
 
 ### Fixes
 
+- **`dark_mode` from Python is kept**: `ArchiMate(dark_mode=False)` (or `from_xml(..., dark_mode=...)`) now renders in that theme and stops following the host page; before, the widget replaced it with the page's theme when it first drew. Setting `dark_mode` after the widget is shown, or using the toolbar switch, also stops following the page, for every view of that widget. Without `dark_mode`, the widget follows the page as before
 - **Element without a type**: An element without a `type`, or with a type that is not text, no longer stops the whole diagram from drawing; the filter panel lists it as "(no type)" and hides it like any other type
 
 ## [0.3.1] - (2026-10-12)

@@ -76,3 +76,12 @@ def test_the_widget_syncs_highlight_ids():
     assert widget.highlight_ids == ["n1", "n2"]
     assert widget.trait_metadata("highlight_ids", "sync") is True
     assert ArchiMate().highlight_ids == []
+
+
+def test_a_dark_mode_given_to_the_widget_is_explicit():
+    from anywidget_archimate import ArchiMate
+
+    assert ArchiMate()._theme_explicit is False
+    assert ArchiMate(dark_mode=False)._theme_explicit is True
+    assert ArchiMate.from_xml(ROOT / "examples" / "sample.xml", dark_mode=True)._theme_explicit is True
+    assert ArchiMate.from_xml(ROOT / "examples" / "sample.xml")._theme_explicit is False
