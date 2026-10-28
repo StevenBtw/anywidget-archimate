@@ -32,11 +32,9 @@ class _ChosenBool(traitlets.Bool):
 class ArchiMate(anywidget.AnyWidget):
     """Interactive ArchiMate model viewer widget.
 
-    Renders ArchiMate elements in a layered diagram with:
-    - Yellow for Business layer (top)
-    - Blue for Application layer (middle)
-    - Green for Technology layer (bottom)
-    - Proper ArchiMate relationship arrows
+    Renders ArchiMate 3.2 elements in layer bands, top to bottom: Motivation, Strategy, Business, Application,
+    Technology (with Physical), Implementation & Migration and Other, with ArchiMate notation icons and
+    relationship arrows.
     """
 
     _esm = get_esm()

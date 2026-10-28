@@ -15,26 +15,35 @@ from xml.etree import ElementTree as ET
 _XSI = "http://www.w3.org/2001/XMLSchema-instance"
 _ARCHI_NS = "http://www.archimatetool.com/archimate"
 
+# ArchiMate 3.2 element types by layer. Physical elements belong to Technology; Junction, Grouping and Location to
+# Other. Archi writes a junction as "Junction", the Open Exchange Format as "AndJunction" or "OrJunction".
+_LAYER_TYPES: dict[str, tuple[str, ...]] = {
+    "Motivation": (
+        "Stakeholder", "Driver", "Assessment", "Goal", "Outcome",
+        "Principle", "Requirement", "Constraint", "Meaning", "Value",
+    ),
+    "Strategy": ("Resource", "Capability", "ValueStream", "CourseOfAction"),
+    "Business": (
+        "BusinessActor", "BusinessRole", "BusinessCollaboration", "BusinessInterface", "BusinessProcess",
+        "BusinessFunction", "BusinessInteraction", "BusinessEvent", "BusinessService", "BusinessObject",
+        "Contract", "Representation", "Product",
+    ),
+    "Application": (
+        "ApplicationComponent", "ApplicationCollaboration", "ApplicationInterface", "ApplicationFunction",
+        "ApplicationInteraction", "ApplicationProcess", "ApplicationEvent", "ApplicationService", "DataObject",
+    ),
+    "Technology": (
+        "Node", "Device", "SystemSoftware", "TechnologyCollaboration", "TechnologyInterface", "Path",
+        "CommunicationNetwork", "TechnologyFunction", "TechnologyProcess", "TechnologyInteraction",
+        "TechnologyEvent", "TechnologyService", "Artifact",
+        "Equipment", "Facility", "DistributionNetwork", "Material",
+    ),
+    "Implementation": ("WorkPackage", "Deliverable", "ImplementationEvent", "Plateau", "Gap"),
+    "Other": ("Location", "Grouping", "Junction", "AndJunction", "OrJunction"),
+}  # fmt: skip
+
 # ArchiMate element type -> layer mapping
-LAYER_MAP: dict[str, str] = {
-    # Business
-    "BusinessActor": "Business",
-    "BusinessProcess": "Business",
-    "BusinessFunction": "Business",
-    "BusinessEvent": "Business",
-    "BusinessObject": "Business",
-    # Application
-    "ApplicationComponent": "Application",
-    "ApplicationInterface": "Application",
-    "ApplicationService": "Application",
-    "DataObject": "Application",
-    # Technology
-    "Node": "Technology",
-    "Device": "Technology",
-    "SystemSoftware": "Technology",
-    "TechnologyService": "Technology",
-    "Artifact": "Technology",
-}
+LAYER_MAP: dict[str, str] = {t: layer for layer, types in _LAYER_TYPES.items() for t in types}
 
 # Archi native format: folder type -> layer
 _ARCHI_FOLDER_LAYERS = {
@@ -234,6 +243,9 @@ def _parse_archi_element(elem: ET.Element) -> dict | None:
     # Skip relationship types that might be in wrong folder
     if element_type.endswith(_ARCHI_REL_SUFFIX):
         return None
+    # Archi keeps a junction's kind in its type attribute ("or"; none means and)
+    if element_type == "Junction":
+        element_type = "OrJunction" if elem.get("type") == "or" else "AndJunction"
 
     layer = LAYER_MAP.get(element_type, "Other")
     documentation = _get_archi_documentation(elem)

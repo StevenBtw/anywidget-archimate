@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0] - (2026-10-28)
+
+### New Features
+
+- **All ArchiMate 3.2 elements**: Every element type is parsed into its layer and drawn with its ArchiMate notation icon, its filter badge and, for behavior, rounded corners: Motivation (Stakeholder, Driver, Assessment, Goal, Outcome, Principle, Requirement, Constraint, Meaning, Value), Strategy (Resource, Capability, Value Stream, Course of Action), the rest of Business (Role, Collaboration, Interface, Interaction, Service, Contract, Representation, Product), Application (Collaboration, Function, Interaction, Process, Event) and Technology (Collaboration, Interface, Path, Communication Network, Function, Process, Interaction, Event), the Physical elements (Equipment, Facility, Distribution Network, Material), Implementation & Migration (Work Package, Deliverable, Implementation Event, Plateau, Gap), and Location and Grouping
+- **New layer bands**: Motivation (lilac) and Strategy (tan) above Business, Implementation & Migration (pink) below Technology, then Other. A band only appears when the model has elements in it; the dark mode labels use the brighter layer color like the other bands
+- **Junctions**: A junction is drawn as a small dot, filled for And and hollow for Or, that relationships attach to, in the band of the elements it joins. Archi's `Junction` is read as `AndJunction` or `OrJunction` from its `type` attribute
+- **Legend follows the model**: The toolbar legend lists the layers in the model, in band order
+
+### Improvements
+
+- **Layer from the type**: An element without a layer, or with one the widget does not know, goes to the layer of its type (a `Goal` without a layer is drawn under Motivation), else to Other. `Implementation & Migration`, `implementation_migration` and `Physical` are accepted as layer names
+- **Process and Function icons**: Process now has the ArchiMate arrow and Function the upward chevron; the notched chevron that Process had is the Value Stream icon
+- **Dependencies**: Requires `anywidget>=0.11.0` (was 0.9.21). The `examples` extra needs `marimo>=0.25.2`, the dev group `pytest>=9.2` and `ruff>=0.17.3`; all locked versions upgraded. Tested on Python 3.12 to 3.15
+
+### Fixes
+
+- **Filter panel stays inside the widget**: With a small `height`, a long filter panel stretched the widget far below that height while the diagram kept to it. The height now sizes the row of filter panel and diagram, the panel scrolls, and the diagram fills the height
+
 ## [0.4.1] - (2026-10-28)
 
 ### Fixes

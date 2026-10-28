@@ -315,19 +315,21 @@ test("the details panel shows markup in element data as text, not as HTML", { sk
   }
 });
 
-test("layer names match in any case, and an unknown or missing layer draws under Other", { skip }, async () => {
+test("layer names match in any case; a missing layer comes from the type, and an unknown one is Other", { skip }, async () => {
   const elements = [
     { id: "x1", name: "Web shop", type: "ApplicationComponent", layer: "application", documentation: "" },
     { id: "x2", name: "App server", type: "Node", layer: "TECHNOLOGY", documentation: "" },
     { id: "x3", name: "Growth", type: "Capability", layer: "Strategy", documentation: "" },
     { id: "x4", name: "Loose", type: "Node", documentation: "" },
+    { id: "x5", name: "Thing", type: "Gadget", layer: "Nowhere", documentation: "" },
   ];
   const { el, close } = await mount({ values: { elements, relationships: [] } });
   try {
     const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id).sort();
-    assert.deepEqual(ids, ["x1", "x2", "x3", "x4"]);
+    assert.deepEqual(ids, ["x1", "x2", "x3", "x4", "x5"]);
+    // A missing layer comes from the type (Node is Technology); an unknown layer and type is Other
     const bands = [...el.querySelectorAll(".aam-layer-label")].map((label) => label.textContent).sort();
-    assert.deepEqual(bands, ["Application Layer", "Other Layer", "Technology Layer"]);
+    assert.deepEqual(bands, ["Application Layer", "Other Layer", "Strategy Layer", "Technology Layer"]);
   } finally {
     close();
   }
@@ -469,6 +471,151 @@ test("views from two copies of the module, each with its own model proxy, keep f
     assert.equal(model.get("_theme_explicit"), undefined);
   } finally {
     cleanupSecond();
+    close();
+  }
+});
+
+test("the height sizes the diagram and filter panel row, so a long filter panel scrolls inside it", { skip }, async () => {
+  const { model, el, close } = await mount({ values: { height: 300 } });
+  try {
+    const row = el.querySelector(".aam-content");
+    assert.equal(row.style.height, "300px");
+    assert.equal(el.querySelector(".aam-graph-container").style.height, "");
+    model.set("height", 450);
+    assert.equal(row.style.height, "450px");
+  } finally {
+    close();
+  }
+});
+
+// Every ArchiMate 3.2 element type and its layer (Physical elements belong to Technology; Junction, Grouping and
+// Location to Other)
+const ALL_TYPES = {
+  Motivation: ["Stakeholder", "Driver", "Assessment", "Goal", "Outcome", "Principle", "Requirement", "Constraint", "Meaning", "Value"],
+  Strategy: ["Resource", "Capability", "ValueStream", "CourseOfAction"],
+  Business: ["BusinessActor", "BusinessRole", "BusinessCollaboration", "BusinessInterface", "BusinessProcess", "BusinessFunction",
+    "BusinessInteraction", "BusinessEvent", "BusinessService", "BusinessObject", "Contract", "Representation", "Product"],
+  Application: ["ApplicationComponent", "ApplicationCollaboration", "ApplicationInterface", "ApplicationFunction",
+    "ApplicationInteraction", "ApplicationProcess", "ApplicationEvent", "ApplicationService", "DataObject"],
+  Technology: ["Node", "Device", "SystemSoftware", "TechnologyCollaboration", "TechnologyInterface", "Path", "CommunicationNetwork",
+    "TechnologyFunction", "TechnologyProcess", "TechnologyInteraction", "TechnologyEvent", "TechnologyService", "Artifact",
+    "Equipment", "Facility", "DistributionNetwork", "Material"],
+  Implementation: ["WorkPackage", "Deliverable", "ImplementationEvent", "Plateau", "Gap"],
+  Other: ["Location", "Grouping", "AndJunction", "OrJunction"],
+};
+const JUNCTIONS = new Set(["AndJunction", "OrJunction", "Junction"]);
+const translateOf = (node) => /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(node.getAttribute("transform")).slice(1).map(Number);
+
+test("every ArchiMate 3.2 element type draws in its own layer band, with an icon and a filter badge", { skip }, async () => {
+  // No layer given: the widget takes it from the type
+  const elements = Object.values(ALL_TYPES).flat().map((type) => ({ id: type, name: type, type, documentation: "" }));
+  const { el, close } = await mount({ values: { elements, relationships: [] } });
+  try {
+    assert.equal(el.querySelectorAll(".aam-node").length, elements.length);
+    // Bands top to bottom: Motivation, Strategy, Business, Application, Technology, Implementation, Other
+    const labels = [...el.querySelectorAll(".aam-layer-label")].sort((a, b) => Number(a.getAttribute("y")) - Number(b.getAttribute("y")));
+    assert.deepEqual(labels.map((l) => l.textContent), Object.keys(ALL_TYPES).map((layer) => `${layer} Layer`));
+    const top = labels.map((l) => Number(l.getAttribute("y")));
+    for (const [i, [layer, types]] of Object.entries(ALL_TYPES).entries()) {
+      for (const type of types) {
+        const node = el.querySelector(`.aam-node[data-id="${type}"]`);
+        const y = translateOf(node)[1];
+        assert.ok(y > top[i] && (i + 1 === top.length || y < top[i + 1]), `${type} sits in the ${layer} band`);
+        if (!JUNCTIONS.has(type)) assert.ok(node.querySelector(".aam-node-icon"), `${type} has an icon`);
+      }
+    }
+    for (const item of el.querySelectorAll(".aam-filter-item")) {
+      const name = item.querySelector(".aam-filter-name").textContent;
+      if (name.endsWith(" Layer") || name === "Nest elements") continue;
+      assert.ok(item.querySelector(".aam-filter-badge")?.textContent, `${name} has a filter badge`);
+    }
+  } finally {
+    close();
+  }
+});
+
+test("a junction draws as a small dot, filled for And and hollow for Or, and relationships attach to it", { skip }, async () => {
+  const elements = [
+    { id: "a1", name: "Billing", type: "ApplicationComponent", layer: "Application", documentation: "" },
+    { id: "j1", name: "", type: "AndJunction", layer: "Other", documentation: "" },
+    { id: "j2", name: "", type: "OrJunction", layer: "Other", documentation: "" },
+    { id: "a2", name: "Shipping", type: "ApplicationComponent", layer: "Application", documentation: "" },
+  ];
+  const relationships = [
+    { id: "r1", source: "a1", target: "j1", type: "Triggering", name: "" },
+    { id: "r2", source: "j1", target: "a2", type: "Triggering", name: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships } });
+  try {
+    const and = el.querySelector('.aam-junction[data-id="j1"]'), or = el.querySelector('.aam-junction[data-id="j2"]');
+    assert.ok(and && or, "both junctions are drawn as junctions");
+    assert.equal(and.querySelector("rect"), null);
+    assert.notEqual(and.querySelector("circle").getAttribute("fill"), "none");
+    assert.equal(or.querySelector("circle").getAttribute("fill"), "none");
+    assert.ok(Number(and.querySelector("circle").getAttribute("r")) <= 8);
+    // Both relationships end within a few pixels of the dot's center
+    const [cx, cy] = translateOf(and);
+    const ends = [...el.querySelectorAll(".aam-edge")].map((path) => path.getAttribute("d").match(/-?[\d.]+/g).map(Number));
+    const touches = ends.filter((n) => [[n[0], n[1]], [n.at(-2), n.at(-1)]].some(([x, y]) => Math.hypot(x - cx, y - cy) <= 10));
+    assert.equal(touches.length, 2);
+  } finally {
+    close();
+  }
+});
+
+test("the toolbar legend lists the layers in the model, in band order", { skip }, async () => {
+  const { model, el, close } = await mount();
+  try {
+    const legend = () => [...el.querySelectorAll(".aam-legend-item")].map((item) => item.textContent);
+    assert.deepEqual(legend(), ["Business", "Application", "Technology"]);
+    model.set("elements", [
+      { id: "g", name: "Grow", type: "Goal", documentation: "" },
+      { id: "c", name: "Sell", type: "Capability", documentation: "" },
+    ]);
+    assert.deepEqual(legend(), ["Motivation", "Strategy"]);
+  } finally {
+    close();
+  }
+});
+
+test("layer aliases: Implementation & Migration and Physical", { skip }, async () => {
+  const elements = [
+    { id: "w1", name: "Upgrade", type: "WorkPackage", layer: "Implementation & Migration", documentation: "" },
+    { id: "w2", name: "Rollout", type: "Deliverable", layer: "implementation_migration", documentation: "" },
+    { id: "e1", name: "Robot", type: "Equipment", layer: "Physical", documentation: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships: [] } });
+  try {
+    const bands = [...el.querySelectorAll(".aam-layer-label")].map((label) => label.textContent).sort();
+    assert.deepEqual(bands, ["Implementation Layer", "Technology Layer"]);
+  } finally {
+    close();
+  }
+});
+
+test("a junction sits in the band of the elements it joins", { skip }, async () => {
+  const elements = [
+    { id: "p1", name: "Order", type: "BusinessProcess", documentation: "" },
+    { id: "p2", name: "Pack", type: "BusinessProcess", documentation: "" },
+    { id: "p3", name: "Ship", type: "BusinessProcess", documentation: "" },
+    { id: "a1", name: "Shop", type: "ApplicationComponent", documentation: "" },
+    { id: "j", name: "", type: "AndJunction", documentation: "" },
+  ];
+  const relationships = [
+    { id: "r1", source: "p1", target: "j", type: "Triggering", name: "" },
+    { id: "r2", source: "j", target: "p2", type: "Triggering", name: "" },
+    { id: "r3", source: "j", target: "p3", type: "Triggering", name: "" },
+    { id: "r4", source: "a1", target: "j", type: "Serving", name: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships } });
+  try {
+    const bands = [...el.querySelectorAll(".aam-layer-label")].map((label) => label.textContent).sort();
+    assert.deepEqual(bands, ["Application Layer", "Business Layer"]);
+    const businessTop = Number([...el.querySelectorAll(".aam-layer-label")].find((l) => l.textContent === "Business Layer").getAttribute("y"));
+    const applicationTop = Number([...el.querySelectorAll(".aam-layer-label")].find((l) => l.textContent === "Application Layer").getAttribute("y"));
+    const y = translateOf(el.querySelector('.aam-junction[data-id="j"]'))[1];
+    assert.ok(y > businessTop && y < applicationTop, "the junction is in the Business band");
+  } finally {
     close();
   }
 });
