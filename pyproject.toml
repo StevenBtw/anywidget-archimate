@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-archimate"
-version = "0.3.1"
+version = "0.4.0"
 description = "Interactive ArchiMate model viewer widget for Jupyter, Marimo, and VS Code notebooks"
 readme = "README.md"
 license = "Apache-2.0"
@@ -42,8 +42,8 @@ line-length = 120
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=9.0.2",
     "ruff>=0.15.6",
 ]

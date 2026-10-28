@@ -332,3 +332,52 @@ test("layer names match in any case, and an unknown or missing layer draws under
     close();
   }
 });
+
+test("an element without a type, or with a type that is not text, still draws with the rest", { skip }, async () => {
+  const elements = [
+    { id: "y1", name: "Web shop", type: "ApplicationComponent", layer: "Application", documentation: "" },
+    { id: "y2", name: "No type", layer: "Application", documentation: "" },
+    { id: "y3", name: "Numeric type", type: 42, layer: "Business", documentation: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships: [] } });
+  try {
+    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id).sort();
+    assert.deepEqual(ids, ["y1", "y2", "y3"]);
+  } finally {
+    close();
+  }
+});
+
+test("the filter panel names a missing type and hides elements by a type that is not text", { skip }, async () => {
+  const elements = [
+    { id: "z1", name: "Web shop", type: "ApplicationComponent", layer: "Application", documentation: "" },
+    { id: "z2", name: "No type", layer: "Application", documentation: "" },
+    { id: "z3", name: "Numeric type", type: 42, layer: "Business", documentation: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships: [] } });
+  try {
+    const names = [...el.querySelectorAll(".aam-filter-item .aam-filter-name")].map((n) => n.textContent);
+    assert.ok(!names.includes("undefined"), `no "undefined" entry in ${names}`);
+    assert.ok(names.includes("(no type)"));
+    const checkbox = (name) =>
+      [...el.querySelectorAll(".aam-filter-item")].find((i) => i.querySelector(".aam-filter-name").textContent === name).querySelector("input");
+    checkbox("(no type)").click();
+    checkbox("42").click();
+    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id);
+    assert.deepEqual(ids, ["z1"]);
+  } finally {
+    close();
+  }
+});
+
+test("layer band labels switch to the brighter layer color in dark mode", { skip }, async () => {
+  const { model, el, close } = await mount({ values: { dark_mode: false } });
+  try {
+    const fills = () => Object.fromEntries([...el.querySelectorAll(".aam-layer-label")].map((l) => [l.textContent, l.getAttribute("fill")]));
+    assert.equal(fills()["Business Layer"], "#555500");
+    model.set("dark_mode", true);
+    assert.equal(fills()["Business Layer"], "#C8C800");
+  } finally {
+    close();
+  }
+});

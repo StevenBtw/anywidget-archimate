@@ -22,9 +22,11 @@ function normalizeLayer(layer) {
   return LAYER_ORDER.find((l) => l.toLowerCase() === key) ?? "Other";
 }
 
-// The model's elements, each with a layer the diagram and filter panel know
+// The model's elements, each with a layer the diagram and filter panel know and a type as text ("" when missing)
 function modelElements(model) {
-  return (model.get("elements") || []).map((e) => (LAYER_ORDER.includes(e.layer) ? e : { ...e, layer: normalizeLayer(e.layer) }));
+  return (model.get("elements") || []).map((e) => (LAYER_ORDER.includes(e.layer) && typeof e.type === "string"
+    ? e
+    : { ...e, layer: normalizeLayer(e.layer), type: String(e.type ?? "") }));
 }
 
 const NODE_WIDTH = 160;
@@ -304,11 +306,12 @@ function buildFilterPanel(model, onFilterChange) {
       if (!types) continue;
       const colors = LAYER_COLORS[layer];
       const sub = document.createElement("div");
-      sub.className = "aam-filter-subheader"; sub.textContent = layer; sub.style.color = colors.text;
+      sub.className = "aam-filter-subheader"; sub.textContent = layer;
+      sub.style.setProperty("--aam-layer-text", colors.text); sub.style.setProperty("--aam-layer-text-dark", colors.stroke);
       elemSection.appendChild(sub);
       for (const [type, count] of Object.entries(types).sort((a, b) => b[1] - a[1])) {
         elemSection.appendChild(createCheckboxItem({
-          name: formatType(type), count, color: colors.fill, borderColor: colors.stroke,
+          name: formatType(type) || "(no type)", count, color: colors.fill, borderColor: colors.stroke,
           badge: getTypeBadge(type), isHidden: hiddenElementTypes.has(type),
           onToggle: (v) => { if (v) hiddenElementTypes.delete(type); else hiddenElementTypes.add(type); emitChange(); },
         }));
@@ -875,7 +878,7 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   const mainG = svgEl("g", { class: "aam-main" });
   svg.appendChild(mainG);
 
-  drawLayerBands(mainG, layout, layout.width);
+  drawLayerBands(mainG, layout, layout.width, darkMode);
 
   // Containers (behind everything)
   const containersG = svgEl("g", { class: "aam-containers" });
@@ -910,7 +913,7 @@ function layoutKey(layout) {
   return `${layout.width}x${layout.height};${boxes.join(";")}`;
 }
 
-function drawLayerBands(parentG, layout, svgWidth) {
+function drawLayerBands(parentG, layout, svgWidth, darkMode) {
   const ext = {};
   for (const [, nd] of layout.nodes) {
     const l = nd.layer || "Other";
@@ -923,7 +926,8 @@ function drawLayerBands(parentG, layout, svgWidth) {
     const c = LAYER_COLORS[layer] || LAYER_COLORS.Other;
     const pad = 20, by = e.minY - pad - LAYER_LABEL_PAD, bh = e.maxY - e.minY + pad * 2 + LAYER_LABEL_PAD;
     parentG.appendChild(svgEl("rect", { x: 0, y: by, width: svgWidth, height: bh, fill: c.fill, opacity: "0.18", rx: "4" }));
-    const lbl = svgEl("text", { x: 14, y: by + 18, class: "aam-layer-label", fill: c.text });
+    // The dark text color is unreadable on a dark band, so dark mode labels in the brighter stroke color
+    const lbl = svgEl("text", { x: 14, y: by + 18, class: "aam-layer-label", fill: darkMode ? c.stroke : c.text });
     lbl.textContent = `${layer} Layer`;
     parentG.appendChild(lbl);
   }
@@ -1084,7 +1088,7 @@ function downloadBlob(blob, filename) {
 function truncate(s, n) { return !s ? "" : s.length > n ? s.slice(0, n - 1) + "\u2026" : s; }
 
 function formatType(type) {
-  return type.replace("Application", "App ").replace("Business", "Biz ").replace("Technology", "Tech ")
+  return String(type ?? "").replace("Application", "App ").replace("Business", "Biz ").replace("Technology", "Tech ")
     .replace("System", "Sys ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
 }
 

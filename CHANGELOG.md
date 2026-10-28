@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0] - (2026-10-28)
+
+### Security
+
+- **Details panel shows model data as text**: The name, id, type, layer and documentation of an element now go into the details panel as text. Before, markup in them ran as HTML when the element's details opened, for example `<img src=x onerror=...>` in a name or `<script>` in documentation. Upgrade if the widget shows models from sources you do not control, such as repository content, LLM output or uploaded files
+
+### New Features
+
+- **Artifact element**: `Artifact` is parsed into the Technology layer and drawn with its own icon and filter badge ("Ar")
+
+### Improvements
+
+- **Layer names in any case**: An element's `layer` matches in any case ("application", "TECHNOLOGY"), and an element with an unknown or missing layer is drawn under Other; before, such an element was left out of the diagram
+- **Readable layer labels in dark mode**: Layer band labels and the filter panel's layer subheaders use the brighter layer color in dark mode; SVG and PNG exports keep it
+- **README**: Documents passing elements and relationships from Python, the accepted layers, selection and highlights, comparison styling and the toolbar; the images now use absolute URLs, so they show on PyPI too
+- **Release checks**: CI also runs on `release/**` branches and checks formatting; publishing to PyPI first runs the full test suite and stops when the tag does not match the package version
+- **Dev dependencies**: Moved from `[tool.uv] dev-dependencies` to `[dependency-groups]`, which removes uv's deprecation warning
+
+### Fixes
+
+- **Element without a type**: An element without a `type`, or with a type that is not text, no longer stops the whole diagram from drawing; the filter panel lists it as "(no type)" and hides it like any other type
+
 ## [0.3.1] - (2026-10-12)
 
 ### Improvements

@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
   pull_request:
     branches: [main]
+  workflow_call:
 
 jobs:
   test:
@@ -40,6 +41,9 @@ jobs:
 
       - name: Lint
         run: uv run ruff check src/ tests/
+
+      - name: Format
+        run: uv run ruff format --check src/ tests/
 
       - name: Test
         run: uv run pytest tests/ -v
