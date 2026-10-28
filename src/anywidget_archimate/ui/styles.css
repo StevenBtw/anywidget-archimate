@@ -193,12 +193,17 @@
 }
 
 .aam-filter-subheader {
+  color: var(--aam-layer-text);
   padding: 4px 12px 2px;
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   opacity: 0.5;
+}
+
+.aam-dark .aam-filter-subheader {
+  color: var(--aam-layer-text-dark);
 }
 
 .aam-filter-item {

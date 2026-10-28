@@ -291,3 +291,142 @@ test("a light class on the page wins over a dark operating system", { skip }, as
     close();
   }
 });
+
+test("the details panel shows markup in element data as text, not as HTML", { skip }, async () => {
+  const hostile = {
+    id: "<b>id</b>",
+    name: "<img src=x onerror=alert(1)>",
+    type: "ApplicationComponent",
+    layer: "Application",
+    documentation: "<script>bad()</script>",
+  };
+  const { dom, el, close } = await mount({ values: { elements: [hostile], relationships: [] } });
+  try {
+    const node = [...el.querySelectorAll(".aam-node")].find((n) => n.dataset.id === hostile.id);
+    node.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    const details = el.querySelector(".aam-details");
+    assert.equal(details.style.display, "block");
+    assert.equal(details.querySelectorAll("img, b, script").length, 0);
+    for (const value of [hostile.id, hostile.name, hostile.layer, hostile.documentation]) {
+      assert.ok(details.textContent.includes(value), `details text holds ${value} literally`);
+    }
+  } finally {
+    close();
+  }
+});
+
+test("layer names match in any case, and an unknown or missing layer draws under Other", { skip }, async () => {
+  const elements = [
+    { id: "x1", name: "Web shop", type: "ApplicationComponent", layer: "application", documentation: "" },
+    { id: "x2", name: "App server", type: "Node", layer: "TECHNOLOGY", documentation: "" },
+    { id: "x3", name: "Growth", type: "Capability", layer: "Strategy", documentation: "" },
+    { id: "x4", name: "Loose", type: "Node", documentation: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships: [] } });
+  try {
+    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id).sort();
+    assert.deepEqual(ids, ["x1", "x2", "x3", "x4"]);
+    const bands = [...el.querySelectorAll(".aam-layer-label")].map((label) => label.textContent).sort();
+    assert.deepEqual(bands, ["Application Layer", "Other Layer", "Technology Layer"]);
+  } finally {
+    close();
+  }
+});
+
+test("an element without a type, or with a type that is not text, still draws with the rest", { skip }, async () => {
+  const elements = [
+    { id: "y1", name: "Web shop", type: "ApplicationComponent", layer: "Application", documentation: "" },
+    { id: "y2", name: "No type", layer: "Application", documentation: "" },
+    { id: "y3", name: "Numeric type", type: 42, layer: "Business", documentation: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships: [] } });
+  try {
+    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id).sort();
+    assert.deepEqual(ids, ["y1", "y2", "y3"]);
+  } finally {
+    close();
+  }
+});
+
+test("the filter panel names a missing type and hides elements by a type that is not text", { skip }, async () => {
+  const elements = [
+    { id: "z1", name: "Web shop", type: "ApplicationComponent", layer: "Application", documentation: "" },
+    { id: "z2", name: "No type", layer: "Application", documentation: "" },
+    { id: "z3", name: "Numeric type", type: 42, layer: "Business", documentation: "" },
+  ];
+  const { el, close } = await mount({ values: { elements, relationships: [] } });
+  try {
+    const names = [...el.querySelectorAll(".aam-filter-item .aam-filter-name")].map((n) => n.textContent);
+    assert.ok(!names.includes("undefined"), `no "undefined" entry in ${names}`);
+    assert.ok(names.includes("(no type)"));
+    const checkbox = (name) =>
+      [...el.querySelectorAll(".aam-filter-item")].find((i) => i.querySelector(".aam-filter-name").textContent === name).querySelector("input");
+    checkbox("(no type)").click();
+    checkbox("42").click();
+    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id);
+    assert.deepEqual(ids, ["z1"]);
+  } finally {
+    close();
+  }
+});
+
+test("layer band labels switch to the brighter layer color in dark mode", { skip }, async () => {
+  const { model, el, close } = await mount({ values: { dark_mode: false } });
+  try {
+    const fills = () => Object.fromEntries([...el.querySelectorAll(".aam-layer-label")].map((l) => [l.textContent, l.getAttribute("fill")]));
+    assert.equal(fills()["Business Layer"], "#555500");
+    model.set("dark_mode", true);
+    assert.equal(fills()["Business Layer"], "#C8C800");
+  } finally {
+    close();
+  }
+});
+
+test("a dark_mode passed from Python wins over the page theme and stays when the page changes", { skip }, async () => {
+  const { dom, model, el, close } = await mount({
+    values: { dark_mode: false, _theme_explicit: true },
+    body: '<section id="pane" data-theme="dark"><div id="host"></div></section>',
+  });
+  try {
+    assert.equal(model.get("dark_mode"), false);
+    assert.equal(el.querySelector(".aam-wrapper").classList.contains("aam-dark"), false);
+    dom.window.document.querySelector("#pane").dataset.theme = "light";
+    await settle();
+    dom.window.document.querySelector("#pane").dataset.theme = "dark";
+    await settle();
+    assert.equal(model.get("dark_mode"), false);
+  } finally {
+    close();
+  }
+});
+
+test("following the page continues after the widget's own theme updates", { skip }, async () => {
+  const { dom, model, close } = await mount({ body: '<section id="pane" data-theme="dark"><div id="host"></div></section>' });
+  try {
+    const pane = dom.window.document.querySelector("#pane");
+    for (const [theme, dark] of [["light", false], ["dark", true], ["light", false]]) {
+      pane.dataset.theme = theme;
+      await settle();
+      assert.equal(model.get("dark_mode"), dark, `follows data-theme="${theme}"`);
+    }
+    assert.equal(model.get("_theme_explicit"), undefined);
+  } finally {
+    close();
+  }
+});
+
+test("a dark_mode the host sets after render stops following the page, also for later views", { skip }, async () => {
+  const { dom, model, close } = await mount({ body: '<section id="pane" data-theme="dark"><div id="host"></div></section>' });
+  try {
+    model.set("dark_mode", false);
+    assert.equal(model.get("_theme_explicit"), true);
+    const pane = dom.window.document.querySelector("#pane");
+    pane.dataset.theme = "light";
+    await settle();
+    pane.dataset.theme = "dark";
+    await settle();
+    assert.equal(model.get("dark_mode"), false);
+  } finally {
+    close();
+  }
+});

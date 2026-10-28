@@ -16,6 +16,19 @@ const LAYER_COLORS = {
 const LAYER_ORDER = ["Business", "Application", "Technology", "Other"];
 const LAYER_RANK = { Business: 0, Application: 1, Technology: 2, Other: 3 };
 
+// A layer named in any case ("application", "TECHNOLOGY") is that layer; an unknown or missing one is Other
+function normalizeLayer(layer) {
+  const key = String(layer ?? "").toLowerCase();
+  return LAYER_ORDER.find((l) => l.toLowerCase() === key) ?? "Other";
+}
+
+// The model's elements, each with a layer the diagram and filter panel know and a type as text ("" when missing)
+function modelElements(model) {
+  return (model.get("elements") || []).map((e) => (LAYER_ORDER.includes(e.layer) && typeof e.type === "string"
+    ? e
+    : { ...e, layer: normalizeLayer(e.layer), type: String(e.type ?? "") }));
+}
+
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 50;
 const LAYER_LABEL_PAD = 30;
@@ -128,6 +141,11 @@ const ARCHIMATE_ICONS = {
     // Rounded rectangle (same as AppService)
     g.appendChild(svgEl("rect", { x: 1, y: 2, width: 14, height: 10, rx: 5, fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
   },
+  Artifact: (g) => {
+    // Page with a folded top-right corner
+    g.appendChild(svgEl("path", { d: "M 3 1 L 10 1 L 13 4 L 13 13 L 3 13 Z", fill: "none", stroke: "currentColor", "stroke-width": 1.2 }));
+    g.appendChild(svgEl("path", { d: "M 10 1 L 10 4 L 13 4", fill: "none", stroke: "currentColor", "stroke-width": 1.0 }));
+  },
 };
 
 // ============================================================================
@@ -219,7 +237,7 @@ function buildFilterPanel(model, onFilterChange) {
 
   function renderPanel() {
     panel.innerHTML = "";
-    const elements = model.get("elements") || [];
+    const elements = modelElements(model);
     const relationships = model.get("relationships") || [];
 
     const header = document.createElement("div");
@@ -288,11 +306,12 @@ function buildFilterPanel(model, onFilterChange) {
       if (!types) continue;
       const colors = LAYER_COLORS[layer];
       const sub = document.createElement("div");
-      sub.className = "aam-filter-subheader"; sub.textContent = layer; sub.style.color = colors.text;
+      sub.className = "aam-filter-subheader"; sub.textContent = layer;
+      sub.style.setProperty("--aam-layer-text", colors.text); sub.style.setProperty("--aam-layer-text-dark", colors.stroke);
       elemSection.appendChild(sub);
       for (const [type, count] of Object.entries(types).sort((a, b) => b[1] - a[1])) {
         elemSection.appendChild(createCheckboxItem({
-          name: formatType(type), count, color: colors.fill, borderColor: colors.stroke,
+          name: formatType(type) || "(no type)", count, color: colors.fill, borderColor: colors.stroke,
           badge: getTypeBadge(type), isHidden: hiddenElementTypes.has(type),
           onToggle: (v) => { if (v) hiddenElementTypes.delete(type); else hiddenElementTypes.add(type); emitChange(); },
         }));
@@ -859,7 +878,7 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   const mainG = svgEl("g", { class: "aam-main" });
   svg.appendChild(mainG);
 
-  drawLayerBands(mainG, layout, layout.width);
+  drawLayerBands(mainG, layout, layout.width, darkMode);
 
   // Containers (behind everything)
   const containersG = svgEl("g", { class: "aam-containers" });
@@ -894,7 +913,7 @@ function layoutKey(layout) {
   return `${layout.width}x${layout.height};${boxes.join(";")}`;
 }
 
-function drawLayerBands(parentG, layout, svgWidth) {
+function drawLayerBands(parentG, layout, svgWidth, darkMode) {
   const ext = {};
   for (const [, nd] of layout.nodes) {
     const l = nd.layer || "Other";
@@ -907,7 +926,8 @@ function drawLayerBands(parentG, layout, svgWidth) {
     const c = LAYER_COLORS[layer] || LAYER_COLORS.Other;
     const pad = 20, by = e.minY - pad - LAYER_LABEL_PAD, bh = e.maxY - e.minY + pad * 2 + LAYER_LABEL_PAD;
     parentG.appendChild(svgEl("rect", { x: 0, y: by, width: svgWidth, height: bh, fill: c.fill, opacity: "0.18", rx: "4" }));
-    const lbl = svgEl("text", { x: 14, y: by + 18, class: "aam-layer-label", fill: c.text });
+    // The dark text color is unreadable on a dark band, so dark mode labels in the brighter stroke color
+    const lbl = svgEl("text", { x: 14, y: by + 18, class: "aam-layer-label", fill: darkMode ? c.stroke : c.text });
     lbl.textContent = `${layer} Layer`;
     parentG.appendChild(lbl);
   }
@@ -1068,7 +1088,7 @@ function downloadBlob(blob, filename) {
 function truncate(s, n) { return !s ? "" : s.length > n ? s.slice(0, n - 1) + "\u2026" : s; }
 
 function formatType(type) {
-  return type.replace("Application", "App ").replace("Business", "Biz ").replace("Technology", "Tech ")
+  return String(type ?? "").replace("Application", "App ").replace("Business", "Biz ").replace("Technology", "Tech ")
     .replace("System", "Sys ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
 }
 
@@ -1076,7 +1096,7 @@ function getTypeBadge(type) {
   return ({
     ApplicationComponent: "AC", ApplicationInterface: "AI", ApplicationService: "AS", DataObject: "DO",
     BusinessActor: "BA", BusinessProcess: "BP", BusinessFunction: "BF", BusinessEvent: "BE", BusinessObject: "BO",
-    Node: "Nd", Device: "Dv", SystemSoftware: "SS", TechnologyService: "TS",
+    Node: "Nd", Device: "Dv", SystemSoftware: "SS", TechnologyService: "TS", Artifact: "Ar",
   })[type] || "";
 }
 
@@ -1101,19 +1121,29 @@ function render({ model, el }) {
     return resolveDark({ theme, darkClass, lightClass, prefersDark });
   }
 
-  // Always auto-detect and observe theme changes
-  let autoTheme = true;
-  model.set("dark_mode", detectHostDark());
-  model.save_changes();
-
+  // Follow the page's theme until dark_mode is chosen: given from Python (_theme_explicit), set by the host later, or
+  // switched in the toolbar. The widget's own updates while following are not a choice.
+  let followingPage = false;
   function syncTheme() {
-    if (!autoTheme) return;
+    if (model.get("_theme_explicit")) return;
     const dark = detectHostDark();
     if (model.get("dark_mode") !== dark) {
-      model.set("dark_mode", dark);
+      followingPage = true;
+      try {
+        model.set("dark_mode", dark);
+      } finally {
+        followingPage = false;
+      }
       model.save_changes();
     }
   }
+  // Any other change to dark_mode is a choice; it is kept in the model, so later views of the widget respect it too
+  function onDarkModeChange() {
+    if (followingPage || model.get("_theme_explicit")) return;
+    model.set("_theme_explicit", true);
+    model.save_changes();
+  }
+  syncTheme();
 
   // data-theme anywhere in the page (any ancestor of the widget may carry it), plus html and body classes and style
   const themeObserver = new MutationObserver(syncTheme);
@@ -1168,7 +1198,7 @@ function render({ model, el }) {
   wrapper.appendChild(details);
 
   function getFilteredData() {
-    const ae = model.get("elements") || [], ar = model.get("relationships") || [];
+    const ae = modelElements(model), ar = model.get("relationships") || [];
     const els = ae.filter((e) => !hiddenLayers.has(e.layer) && !hiddenElemTypes.has(e.type));
     const vis = new Set(els.map((e) => e.id));
     const rels = ar.filter((r) => !hiddenRelTypes.has(r.type) && vis.has(r.source) && vis.has(r.target));
@@ -1215,7 +1245,7 @@ function render({ model, el }) {
     const s = graphContainer.querySelector("svg.aam-svg");
     if (s && fitView) s.setAttribute("viewBox", fitView);
   });
-  toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { autoTheme = false; model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
+  toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
 
   // Upload
   const fileInput = toolbar.querySelector(".aam-file-input");
@@ -1284,6 +1314,7 @@ function render({ model, el }) {
     ["change:elements", rebuildDiagram],
     ["change:relationships", rebuildDiagram],
     ["change:dark_mode", rebuildDiagram],
+    ["change:dark_mode", onDarkModeChange],
     ["change:selected_element", applyMarks],
     ["change:highlight_ids", applyMarks],
     ["change:height", () => { graphContainer.style.height = model.get("height") + "px"; rebuildDiagram(); }],
@@ -1303,13 +1334,25 @@ function render({ model, el }) {
 
 function showDetails(container, el) {
   container.style.display = "block";
+  // Fixed markup only: model values go in as text, so markup in a name or documentation stays inert
   container.innerHTML = `
-    <div class="aam-details-header"><strong>${el.name}</strong><button class="aam-btn aam-details-close">&times;</button></div>
-    <div class="aam-details-body">
-      <div><span class="aam-detail-label">Type:</span> ${formatType(el.type)}</div>
-      <div><span class="aam-detail-label">Layer:</span> ${el.layer}</div>
-      <div><span class="aam-detail-label">ID:</span> <code>${el.id}</code></div>
-      ${el.documentation ? `<div class="aam-detail-doc">${el.documentation}</div>` : ""}
-    </div>`;
+    <div class="aam-details-header"><strong></strong><button class="aam-btn aam-details-close">&times;</button></div>
+    <div class="aam-details-body"></div>`;
+  container.querySelector(".aam-details-header strong").textContent = el.name ?? "";
+  const body = container.querySelector(".aam-details-body");
+  const row = (label, value) => {
+    const div = document.createElement("div");
+    const lbl = document.createElement("span"); lbl.className = "aam-detail-label"; lbl.textContent = `${label}:`;
+    div.append(lbl, " ", value);
+    body.appendChild(div);
+  };
+  row("Type", formatType(el.type));
+  row("Layer", el.layer ?? "");
+  const code = document.createElement("code"); code.textContent = el.id ?? "";
+  row("ID", code);
+  if (el.documentation) {
+    const doc = document.createElement("div"); doc.className = "aam-detail-doc"; doc.textContent = el.documentation;
+    body.appendChild(doc);
+  }
   container.querySelector(".aam-details-close").addEventListener("click", () => { container.style.display = "none"; });
 }

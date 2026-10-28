@@ -72,8 +72,10 @@ def test_layer_map_covers_all_types():
         "Device",
         "SystemSoftware",
         "TechnologyService",
+        "Artifact",
     }
     assert set(LAYER_MAP.keys()) == expected_types
+    assert LAYER_MAP["Artifact"] == "Technology"
 
 
 def test_parse_preserves_relationship_types():

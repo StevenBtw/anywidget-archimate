@@ -33,6 +33,7 @@ LAYER_MAP: dict[str, str] = {
     "Device": "Technology",
     "SystemSoftware": "Technology",
     "TechnologyService": "Technology",
+    "Artifact": "Technology",
 }
 
 # Archi native format: folder type -> layer
