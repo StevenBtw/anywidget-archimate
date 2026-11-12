@@ -1,6 +1,19 @@
 # Changelog
 
-## [0.5.1] - (2026-10-28)
+## [0.5.2] - 2026-11-12
+
+Maintenance release: the front end is TypeScript, bundled by esbuild, with no change to what the widget draws or how it is used. Upgrading needs no action.
+
+### Changed
+
+- **Front end in TypeScript**: The widget loads `src/anywidget_archimate/ui/dist/widget.js`, built by esbuild from the modules in `src/anywidget_archimate/ui/*.ts` (`npm run build`), instead of the JavaScript modules joined as text. dagre is still inlined, so the widget makes no network requests.
+- **Release checks**: CI type-checks the front end with `tsc` (`npm run typecheck`) and fails when the committed bundle is stale (`npm run check`).
+
+### Dependencies
+
+- **Locked versions refreshed**: ruff 0.17.4, websockets 17.4, ipython 9.18.1, pyzmq 27.3.0 and anyio 4.16.0, among others. Front-end build tools: esbuild 0.28.2 and TypeScript 7.0.2.
+
+## [0.5.1] - 2026-10-28
 
 ### Improvements
 
@@ -8,7 +21,7 @@
 - **JavaScript test dependency**: jsdom 30.1.3 (was 29.1.1) for the render tests; it needs Node 22.22.2 or newer, which CI's Node 22 provides
 - **Example notebook**: `examples/demo_marimo.py` is marked as written with marimo 0.25.2, the version the `examples` extra now requires
 
-## [0.5.0] - (2026-10-28)
+## [0.5.0] - 2026-10-28
 
 ### New Features
 
@@ -27,7 +40,7 @@
 
 - **Filter panel stays inside the widget**: With a small `height`, a long filter panel stretched the widget far below that height while the diagram kept to it. The height now sizes the row of filter panel and diagram, the panel scrolls, and the diagram fills the height
 
-## [0.4.1] - (2026-10-28)
+## [0.4.1] - 2026-10-28
 
 ### Fixes
 
@@ -35,7 +48,7 @@
 - **`dark_mode` set from Python is always kept**: `widget = ArchiMate(); widget.dark_mode = False`, then showing `widget`, rendered in the page's theme; only `dark_mode` given to the constructor was kept. Assigning `dark_mode` from Python now counts as a choice at any time, including the value it already has (`widget.dark_mode = True` on a dark page keeps it dark when the page turns light), while the browser's own updates (which arrive through `set_state`) still do not
 - **`dark_mode=None`**: Means "follow the page", like leaving it out; before, it raised a `TraitError`
 
-## [0.4.0] - (2026-10-28)
+## [0.4.0] - 2026-10-28
 
 ### Security
 
@@ -58,7 +71,7 @@
 - **`dark_mode` from Python is kept**: `ArchiMate(dark_mode=False)` (or `from_xml(..., dark_mode=...)`) now renders in that theme and stops following the host page; before, the widget replaced it with the page's theme when it first drew. Setting `dark_mode` after the widget is shown, or using the toolbar switch, also stops following the page, for every view of that widget. Without `dark_mode`, the widget follows the page as before
 - **Element without a type**: An element without a `type`, or with a type that is not text, no longer stops the whole diagram from drawing; the filter panel lists it as "(no type)" and hides it like any other type
 
-## [0.3.1] - (2026-10-12)
+## [0.3.1] - 2026-10-12
 
 ### Improvements
 
@@ -70,7 +83,7 @@
 - **Zoom survives redraws**: Switching the theme, updating `status` or `badge`, or changing `height` no longer resets the zoom and pan; the diagram refits only when its layout changes, for example after new data or a filter change
 - **Fit button**: Fit now returns to the whole diagram; before, it left the view unchanged
 
-## [0.3.0] - (2026-10-09)
+## [0.3.0] - 2026-10-09
 
 ### New Features
 
@@ -90,7 +103,7 @@
 - **Explicit host theme wins**: An explicit light choice on the host now overrides the operating system: `data-theme="light"` on the closest ancestor (then `<html>`, then `<body>`) or a `light` class on `<html>` or `<body>` renders light even when the operating system prefers dark. `data-theme` takes precedence over a `dark` class, which takes precedence over a `light` class, which takes precedence over `prefers-color-scheme` ([#13](https://github.com/StevenBtw/anywidget-archimate/issues/13))
 - **Clean removal**: When the host removes the widget, it stops listening to the model and observing the page, so a re-displayed widget no longer leaves an earlier view rebuilding in the background
 
-## [0.2.0] - (2026-03-16)
+## [0.2.0] - 2026-03-16
 
 ### Fixes
 
@@ -103,7 +116,7 @@
 - **OS-level theme listener**: Added `prefers-color-scheme` media query change listener for OS dark/light mode switches
 - **Dark mode toggle always visible**: Manual toggle no longer hidden in auto-theme mode; clicking it disables auto-theme so the user's choice is respected
 
-## [0.1.4] - (2026-03-16)
+## [0.1.4] - 2026-03-16
 
 ### New Features
 
@@ -113,7 +126,7 @@
 
 - **Neutral grey palette**: Light and dark mode colors updated to neutral grey tones for a cleaner look and better integration with marimo
 
-## [0.1.3] - (2026-03-15)
+## [0.1.3] - 2026-03-15
 
 ### New Features
 
@@ -121,13 +134,13 @@
 - **Export to SVG**: Download the current diagram as a self-contained SVG file with inlined fonts
 - **Export to PNG**: Download the current diagram as a high-resolution (2x) PNG with correct light/dark background
 
-## [0.1.2] - (2026-03-15)
+## [0.1.2] - 2026-03-15
 
 ### New Features
 
 - **Demo module**: Built-in `demo_archimate()` function that creates a pre-populated ArchiMate widget with a sample enterprise architecture model (12 elements across Business, Application and Technology layers); no external files needed
 
-## [0.1.1] - (2026-03-15)
+## [0.1.1] - 2026-03-15
 
 ### New Features
 
@@ -150,7 +163,7 @@
 - **Dark mode default**: Dark theme enabled by default
 - **CI**: Added Python 3.14 to test matrix
 
-## [0.1.0] - (2026-03-15)
+## [0.1.0] - 2026-03-15
 
 ### New Features
 

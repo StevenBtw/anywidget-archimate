@@ -19,8 +19,8 @@ import pytest
 from anywidget_archimate.ui import get_esm
 
 ROOT = Path(__file__).resolve().parents[1]
-NODE = shutil.which("node")
-needs_node = pytest.mark.skipif(NODE is None, reason="Node.js is not installed")
+NODE = shutil.which("node") or ""
+needs_node = pytest.mark.skipif(not NODE, reason="Node.js is not installed")
 
 
 def test_the_module_makes_no_network_imports():
@@ -49,8 +49,24 @@ def test_the_module_loads_offline_and_exports_render(tmp_path):
 
 
 @needs_node
+def test_bundle_is_built_from_the_current_sources():
+    """ui/dist/widget.js is what esbuild makes of the TypeScript modules now (CI installs the root devDependencies)."""
+    if not (ROOT / "node_modules" / "esbuild").exists():
+        pytest.skip("esbuild is not installed: npm ci in the package root")
+    proc = subprocess.run(
+        [NODE, "scripts/build-esm.mjs", "--check"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=ROOT,
+        check=False,
+    )
+    assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+
+
+@needs_node
 def test_javascript(tmp_path):
-    tests = sorted(str(path) for path in (ROOT / "tests" / "js").glob("*.test.mjs"))
+    tests = sorted(str(path) for path in (ROOT / "tests" / "js").glob("*.test.ts"))
     assert tests, "no JavaScript tests found in tests/js"
     module = tmp_path / "widget.mjs"
     module.write_text(get_esm(), encoding="utf-8")
