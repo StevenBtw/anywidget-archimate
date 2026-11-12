@@ -1,12 +1,29 @@
 // ArchiMate widget renderer
 // Uses dagre for layered layout, vanilla SVG for rendering
 
+import {
+  DIAGRAM_CSS,
+  STATUS_ACCENTS,
+  badgeText,
+  highlightIds,
+  markerId,
+  resolveDark,
+  statusClass,
+} from "./status.ts";
+import type { ArchiElement, ArchiRelationship, EdgeInfo, Layout, NodePos, WidgetModel } from "./types.ts";
+
 // ============================================================================
 // Constants
 // ============================================================================
 
+interface LayerColors {
+  fill: string;
+  stroke: string;
+  text: string;
+}
+
 // Archi standard colors; Plateau and Gap take the Implementation pink, so each band has one color
-const LAYER_COLORS = {
+const LAYER_COLORS: Record<string, LayerColors> = {
   Motivation:     { fill: "#CCCCFF", stroke: "#8484E0", text: "#2E2E6B" },
   Strategy:       { fill: "#F5DEAA", stroke: "#C99A3B", text: "#5C4211" },
   Business:       { fill: "#FFFFB5", stroke: "#C8C800", text: "#555500" },
@@ -17,47 +34,54 @@ const LAYER_COLORS = {
 };
 
 // Bands top to bottom: why (Motivation, Strategy), what and how (Business, Application, Technology), then change
-const LAYER_ORDER = ["Motivation", "Strategy", "Business", "Application", "Technology", "Implementation", "Other"];
-const LAYER_RANK = Object.fromEntries(LAYER_ORDER.map((layer, i) => [layer, i]));
+const LAYER_ORDER: string[] = ["Motivation", "Strategy", "Business", "Application", "Technology", "Implementation", "Other"];
+const LAYER_RANK: Record<string, number> = Object.fromEntries(LAYER_ORDER.map((layer, i) => [layer, i]));
 // Other names for a layer, in lower case (Physical elements belong to Technology)
-const LAYER_ALIASES = {
+const LAYER_ALIASES: Record<string, string> = {
   "implementation & migration": "Implementation", "implementation and migration": "Implementation",
   implementation_migration: "Implementation", physical: "Technology",
 };
 
 // A layer named in any case ("application", "TECHNOLOGY") or by an alias is that layer; a missing or unknown one comes
 // from the element's type, else it is Other
-function normalizeLayer(layer, type) {
+function normalizeLayer(layer: unknown, type: string): string {
   const key = String(layer ?? "").trim().toLowerCase();
   return LAYER_ORDER.find((l) => l.toLowerCase() === key) ?? LAYER_ALIASES[key] ?? ELEMENT_TYPES.get(type)?.layer ?? "Other";
 }
 
 // The model's elements, each with a layer the diagram and filter panel know and a type as text ("" when missing). A
 // junction in Other moves to the layer most of the elements it joins share, so it sits between them.
-function modelElements(model) {
-  const elements = (model.get("elements") || []).map((e) => (LAYER_ORDER.includes(e.layer) && typeof e.type === "string"
+function modelElements(model: WidgetModel): ArchiElement[] {
+  const elements = ((model.get("elements") ?? []) as ArchiElement[]).map((e) => (LAYER_ORDER.includes(e.layer ?? "") && typeof e.type === "string"
     ? e
     : { ...e, layer: normalizeLayer(e.layer, String(e.type ?? "")), type: String(e.type ?? "") }));
-  const layerOf = new Map(elements.filter((e) => !isJunction(e.type)).map((e) => [e.id, e.layer]));
-  const votes = new Map();
-  for (const r of model.get("relationships") || []) {
-    for (const [end, other] of [[r.source, r.target], [r.target, r.source]]) {
+  const layerOf = new Map(elements.filter((e) => !isJunction(e.type ?? "")).map((e) => [e.id, e.layer ?? "Other"]));
+  const votes = new Map<string, Map<string, number>>();
+  for (const r of (model.get("relationships") ?? []) as ArchiRelationship[]) {
+    for (const [end, other] of [[r.source, r.target], [r.target, r.source]] as [string, string][]) {
       if (!layerOf.has(other)) continue;
-      const count = votes.get(end) ?? new Map();
-      count.set(layerOf.get(other), (count.get(layerOf.get(other)) ?? 0) + 1);
+      const count = votes.get(end) ?? new Map<string, number>();
+      const otherLayer = layerOf.get(other) as string;
+      count.set(otherLayer, (count.get(otherLayer) ?? 0) + 1);
       votes.set(end, count);
     }
   }
   return elements.map((e) => {
-    if (!isJunction(e.type) || e.layer !== "Other" || !votes.has(e.id)) return e;
-    const [layer] = [...votes.get(e.id)].sort((a, b) => b[1] - a[1] || LAYER_RANK[a[0]] - LAYER_RANK[b[0]])[0];
+    if (!isJunction(e.type ?? "") || e.layer !== "Other" || !votes.has(e.id)) return e;
+    const [layer] = [...votes.get(e.id) as Map<string, number>].sort((a, b) => b[1] - a[1] || LAYER_RANK[a[0]] - LAYER_RANK[b[0]])[0];
     return { ...e, layer };
   });
 }
 
 // Every ArchiMate 3.2 element type: its layer, filter badge, icon shape and whether it is behavior (rounded corners).
 // Archi writes a junction as "Junction", the Open Exchange Format as "AndJunction" or "OrJunction".
-const ELEMENT_TYPES = new Map([
+interface ElementTypeInfo {
+  layer: string;
+  badge: string;
+  icon: string;
+  behavior: boolean;
+}
+const ELEMENT_TYPE_ROWS: [type: string, layer: string, badge: string, icon: string, behavior?: boolean][] = [
   ["Stakeholder", "Motivation", "Sh", "role"], ["Driver", "Motivation", "Dr", "driver"],
   ["Assessment", "Motivation", "As", "assessment"], ["Goal", "Motivation", "Go", "goal"],
   ["Outcome", "Motivation", "Oc", "outcome"], ["Principle", "Motivation", "Pr", "principle"],
@@ -97,20 +121,30 @@ const ELEMENT_TYPES = new Map([
 
   ["Location", "Other", "Lo", "location"], ["Grouping", "Other", "Gr", "grouping"],
   ["Junction", "Other", "Jn", "junction"], ["AndJunction", "Other", "Jn", "junction"], ["OrJunction", "Other", "Jn", "junction"],
-].map(([type, layer, badge, icon, behavior = false]) => [type, { layer, badge, icon, behavior }]));
+];
+const ELEMENT_TYPES = new Map<string, ElementTypeInfo>(
+  ELEMENT_TYPE_ROWS.map(([type, layer, badge, icon, behavior = false]) => [type, { layer, badge, icon, behavior }]),
+);
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 50;
 const JUNCTION_SIZE = 12;
 const LAYER_LABEL_PAD = 30;
 
-function nodeRx(type) { return ELEMENT_TYPES.get(type)?.behavior ? 14 : 4; }
-function isJunction(type) { return ELEMENT_TYPES.get(type)?.icon === "junction"; }
+function nodeRx(type: string): number { return ELEMENT_TYPES.get(type)?.behavior ? 14 : 4; }
+function isJunction(type: string): boolean { return ELEMENT_TYPES.get(type)?.icon === "junction"; }
 // The size an element takes in the layout: a junction is a small dot that relationships attach to
-function nodeSize(el) { return isJunction(el.type) ? { width: JUNCTION_SIZE, height: JUNCTION_SIZE } : { width: NODE_WIDTH, height: NODE_HEIGHT }; }
+function nodeSize(el: ArchiElement): { width: number; height: number } {
+  return isJunction(el.type ?? "") ? { width: JUNCTION_SIZE, height: JUNCTION_SIZE } : { width: NODE_WIDTH, height: NODE_HEIGHT };
+}
 
 // Relationship visual config
-const REL_STYLES = {
+interface RelStyle {
+  dash: string;
+  srcMarker: string;
+  tgtMarker: string;
+}
+const REL_STYLES: Record<string, RelStyle> = {
   Composition:   { dash: "",     srcMarker: "diamond-filled", tgtMarker: "" },
   Aggregation:   { dash: "",     srcMarker: "diamond-hollow", tgtMarker: "" },
   Assignment:    { dash: "",     srcMarker: "circle-filled",  tgtMarker: "arrow-filled" },
@@ -124,7 +158,7 @@ const REL_STYLES = {
   Influence:     { dash: "6 4",  srcMarker: "",               tgtMarker: "arrow-hollow" },
 };
 
-const REL_COLORS = {
+const REL_COLORS: Record<string, string> = {
   Composition: "#7c3aed", Aggregation: "#6366f1", Assignment: "#2563eb",
   Realization: "#0891b2", Serving: "#059669", Access: "#d97706",
   Flow: "#dc2626", Triggering: "#be185d", Association: "#6b7280",
@@ -135,16 +169,17 @@ const REL_COLORS = {
 // ArchiMate Icons (SVG shapes in ArchiMate notation, rendered in a 16x14 box in the top-right corner)
 // ============================================================================
 
-const ICON_STROKE = { fill: "none", stroke: "currentColor", "stroke-width": 1.2 };
-const iconPath = (g, d, extra = {}) => g.appendChild(svgEl("path", { d, ...ICON_STROKE, ...extra }));
-const iconCircle = (g, cx, cy, r, extra = {}) => g.appendChild(svgEl("circle", { cx, cy, r, ...ICON_STROKE, ...extra }));
-const iconLine = (g, x1, y1, x2, y2, width = 1.2, extra = {}) =>
+type SvgAttrs = Record<string, string | number | undefined | null>;
+const ICON_STROKE: SvgAttrs = { fill: "none", stroke: "currentColor", "stroke-width": 1.2 };
+const iconPath = (g: SVGGElement, d: string, extra: SvgAttrs = {}) => g.appendChild(svgEl("path", { d, ...ICON_STROKE, ...extra }));
+const iconCircle = (g: SVGGElement, cx: number, cy: number, r: number, extra: SvgAttrs = {}) => g.appendChild(svgEl("circle", { cx, cy, r, ...ICON_STROKE, ...extra }));
+const iconLine = (g: SVGGElement, x1: number, y1: number, x2: number, y2: number, width = 1.2, extra: SvgAttrs = {}) =>
   g.appendChild(svgEl("line", { x1, y1, x2, y2, stroke: "currentColor", "stroke-width": width, ...extra }));
-const iconRect = (g, x, y, width, height, rx = 0, extra = {}) =>
+const iconRect = (g: SVGGElement, x: number, y: number, width: number, height: number, rx = 0, extra: SvgAttrs = {}) =>
   g.appendChild(svgEl("rect", { x, y, width, height, rx, ...ICON_STROKE, ...extra }));
-const DOT = { fill: "currentColor", stroke: "none" };
+const DOT: SvgAttrs = { fill: "currentColor", stroke: "none" };
 
-const ICON_SHAPES = {
+const ICON_SHAPES: Record<string, (g: SVGGElement) => void> = {
   // Active structure
   actor: (g) => {
     iconCircle(g, 8, 3, 2.5);
@@ -269,25 +304,32 @@ const ICON_SHAPES = {
 };
 
 // The icon drawing for an element type, if it has one (a junction is drawn on its own)
-function iconFor(type) { return ICON_SHAPES[ELEMENT_TYPES.get(type)?.icon]; }
+function iconFor(type: string): ((g: SVGGElement) => void) | undefined { return ICON_SHAPES[ELEMENT_TYPES.get(type)?.icon ?? ""]; }
 
 // ============================================================================
 // SVG Helpers
 // ============================================================================
 
-function svgEl(tag, attrs = {}) {
+function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: SvgAttrs = {}): SVGElementTagNameMap[K] {
   const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
   for (const [k, v] of Object.entries(attrs)) {
-    if (v !== undefined && v !== null) el.setAttribute(k, v);
+    if (v !== undefined && v !== null) el.setAttribute(k, String(v));
   }
   return el;
 }
 
-function buildMarkerDefs() {
+// querySelector, but the widget's own markup is always there: fail loudly instead of on a null
+function qs<T extends Element>(root: ParentNode, selector: string): T {
+  const found = root.querySelector<T>(selector);
+  if (!found) throw new Error(`widget markup is missing ${selector}`);
+  return found;
+}
+
+function buildMarkerDefs(): SVGDefsElement {
   const defs = svgEl("defs");
 
   // One set per line color: the default grey, and the color of each status that recolors an edge
-  for (const [status, color] of [[null, "#666"], ...STATUS_ACCENTS]) {
+  for (const [status, color] of [[null, "#666"], ...STATUS_ACCENTS] as [string | null, string][]) {
     const arrowFilled = svgEl("marker", {
       id: markerId("arrow-filled", status), viewBox: "0 0 10 10", refX: "10", refY: "5",
       markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
@@ -345,13 +387,16 @@ function buildMarkerDefs() {
 // Filter Sidebar
 // ============================================================================
 
-function buildFilterPanel(model, onFilterChange) {
+function buildFilterPanel(
+  model: WidgetModel,
+  onFilterChange: (layers: Set<string>, elementTypes: Set<string>, relTypes: Set<string>, nest: boolean) => void,
+): { element: HTMLDivElement; render: () => void; dispose: () => void } {
   const panel = document.createElement("div");
   panel.className = "aam-filter-panel";
 
-  const hiddenLayers = new Set();
-  const hiddenElementTypes = new Set();
-  const hiddenRelTypes = new Set();
+  const hiddenLayers = new Set<string>();
+  const hiddenElementTypes = new Set<string>();
+  const hiddenRelTypes = new Set<string>();
   let nestElements = true;
 
   function emitChange() {
@@ -361,7 +406,7 @@ function buildFilterPanel(model, onFilterChange) {
   function renderPanel() {
     panel.innerHTML = "";
     const elements = modelElements(model);
-    const relationships = model.get("relationships") || [];
+    const relationships = (model.get("relationships") ?? []) as ArchiRelationship[];
 
     const header = document.createElement("div");
     header.className = "aam-filter-header";
@@ -395,8 +440,8 @@ function buildFilterPanel(model, onFilterChange) {
     addToggleLinks(layerHdr, LAYER_ORDER, hiddenLayers, () => { emitChange(); renderPanel(); });
     layerSection.appendChild(layerHdr);
 
-    const layerCounts = {};
-    elements.forEach((e) => { layerCounts[e.layer] = (layerCounts[e.layer] || 0) + 1; });
+    const layerCounts: Record<string, number> = {};
+    elements.forEach((e) => { layerCounts[e.layer ?? ""] = (layerCounts[e.layer ?? ""] || 0) + 1; });
     for (const layer of LAYER_ORDER) {
       const count = layerCounts[layer] || 0;
       if (count === 0) continue;
@@ -415,14 +460,15 @@ function buildFilterPanel(model, onFilterChange) {
     const elemHdr = document.createElement("div");
     elemHdr.className = "aam-filter-section-title";
     elemHdr.innerHTML = '<span>Elements</span>';
-    const allET = [...new Set(elements.map((e) => e.type))];
+    const allET = [...new Set(elements.map((e) => e.type ?? ""))];
     addToggleLinks(elemHdr, allET, hiddenElementTypes, () => { emitChange(); renderPanel(); });
     elemSection.appendChild(elemHdr);
 
-    const typesByLayer = {};
+    const typesByLayer: Record<string, Record<string, number>> = {};
     elements.forEach((e) => {
-      if (!typesByLayer[e.layer]) typesByLayer[e.layer] = {};
-      typesByLayer[e.layer][e.type] = (typesByLayer[e.layer][e.type] || 0) + 1;
+      const layer = e.layer ?? "";
+      if (!typesByLayer[layer]) typesByLayer[layer] = {};
+      typesByLayer[layer][e.type ?? ""] = (typesByLayer[layer][e.type ?? ""] || 0) + 1;
     });
     for (const layer of LAYER_ORDER) {
       const types = typesByLayer[layer];
@@ -448,14 +494,14 @@ function buildFilterPanel(model, onFilterChange) {
     const relHdr = document.createElement("div");
     relHdr.className = "aam-filter-section-title";
     relHdr.innerHTML = '<span>Relationships</span>';
-    const allRT = [...new Set(relationships.map((r) => r.type))];
+    const allRT = [...new Set(relationships.map((r) => r.type ?? ""))];
     addToggleLinks(relHdr, allRT, hiddenRelTypes, () => { emitChange(); renderPanel(); });
     relSection.appendChild(relHdr);
 
-    const relCounts = {};
-    relationships.forEach((r) => { relCounts[r.type] = (relCounts[r.type] || 0) + 1; });
+    const relCounts: Record<string, number> = {};
+    relationships.forEach((r) => { relCounts[r.type ?? ""] = (relCounts[r.type ?? ""] || 0) + 1; });
     for (const [type, count] of Object.entries(relCounts).sort((a, b) => b[1] - a[1])) {
-      const st = REL_STYLES[type] || {};
+      const st = REL_STYLES[type] ?? { dash: "", srcMarker: "", tgtMarker: "" };
       relSection.appendChild(createCheckboxItem({
         name: type, count, color: REL_COLORS[type] || "#6b7280",
         borderColor: REL_COLORS[type] || "#6b7280", dash: st.dash,
@@ -477,7 +523,7 @@ function buildFilterPanel(model, onFilterChange) {
   return { element: panel, render: renderPanel, dispose };
 }
 
-function addToggleLinks(header, allKeys, hiddenSet, callback) {
+function addToggleLinks(header: HTMLElement, allKeys: string[], hiddenSet: Set<string>, callback: () => void): void {
   if (allKeys.length < 2) return;
   const links = document.createElement("span");
   links.className = "aam-filter-toggles";
@@ -489,7 +535,16 @@ function addToggleLinks(header, allKeys, hiddenSet, callback) {
   header.appendChild(links);
 }
 
-function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHidden, onToggle }) {
+function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHidden, onToggle }: {
+  name: string;
+  count: number;
+  color: string;
+  borderColor?: string;
+  badge?: string;
+  dash?: string;
+  isHidden: boolean;
+  onToggle: (checked: boolean) => void;
+}): HTMLDivElement {
   const item = document.createElement("div");
   item.className = "aam-filter-item" + (isHidden ? " aam-filter-hidden" : "");
   const cb = document.createElement("input");
@@ -506,7 +561,7 @@ function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHi
   }
   const nm = document.createElement("span"); nm.className = "aam-filter-name"; nm.textContent = name;
   item.appendChild(nm);
-  const ct = document.createElement("span"); ct.className = "aam-filter-count"; ct.textContent = count;
+  const ct = document.createElement("span"); ct.className = "aam-filter-count"; ct.textContent = String(count);
   item.appendChild(ct);
   return item;
 }
@@ -523,30 +578,30 @@ const CHILD_GAP = 10;
 const LAYER_GAP = 60;
 const LAYER_MARGIN = 50;
 
-function computeLayout(elements, relationships, nestElements) {
+function computeLayout(elements: ArchiElement[], relationships: ArchiRelationship[], nestElements: boolean): Layout {
   const elementIds = new Set(elements.map((e) => e.id));
   const elemById = new Map(elements.map((e) => [e.id, e]));
 
   // --- Nesting ---
-  const nestedEdgeIds = new Set();
-  const childToParent = new Map();
-  const parentToChildren = new Map();
+  const nestedEdgeIds = new Set<string>();
+  const childToParent = new Map<string, string>();
+  const parentToChildren = new Map<string, string[]>();
   if (nestElements) {
     for (const rel of relationships) {
-      if (!NESTING_REL_TYPES.has(rel.type)) continue;
+      if (!NESTING_REL_TYPES.has(rel.type ?? "")) continue;
       if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
       if (!childToParent.has(rel.target)) {
         childToParent.set(rel.target, rel.source);
         if (!parentToChildren.has(rel.source)) parentToChildren.set(rel.source, []);
-        parentToChildren.get(rel.source).push(rel.target);
+        (parentToChildren.get(rel.source) as string[]).push(rel.target);
         nestedEdgeIds.add(rel.id);
       }
     }
   }
   const parentIds = new Set(parentToChildren.keys());
 
-  function containerSize(parentId) {
-    const ch = parentToChildren.get(parentId) || [];
+  function containerSize(parentId: string): { width: number; height: number } {
+    const ch = parentToChildren.get(parentId) ?? [];
     const cols = Math.min(ch.length, CHILD_COLS);
     const rows = Math.ceil(ch.length / CHILD_COLS);
     return {
@@ -556,19 +611,16 @@ function computeLayout(elements, relationships, nestElements) {
   }
 
   // --- Group top-level elements by layer ---
-  const layerElements = {};
+  const layerElements: Record<string, ArchiElement[]> = {};
   for (const el of elements) {
     if (childToParent.has(el.id)) continue;
-    if (!layerElements[el.layer]) layerElements[el.layer] = [];
-    layerElements[el.layer].push(el);
+    const layer = el.layer ?? "Other";
+    if (!layerElements[layer]) layerElements[layer] = [];
+    layerElements[layer].push(el);
   }
 
-  // --- Collect cross-layer edge targets for sorting (minimize crossings) ---
-  const crossLayerTargets = new Map(); // nodeId → [target x positions]
-  // We'll populate this after first pass
-
   // --- Layout each layer with dagre LR ---
-  const nodePositions = new Map();
+  const nodePositions = new Map<string, NodePos>();
   let currentY = LAYER_MARGIN;
   let maxWidth = 0;
   const orderedLayers = LAYER_ORDER.filter((l) => layerElements[l] && layerElements[l].length > 0);
@@ -578,18 +630,18 @@ function computeLayout(elements, relationships, nestElements) {
     const layerIds = new Set(layerEls.map((e) => e.id));
 
     // Find within-layer edges
-    const withinEdges = [];
+    const withinEdges: { src: string; tgt: string; rel: ArchiRelationship }[] = [];
     for (const rel of relationships) {
       if (nestedEdgeIds.has(rel.id)) continue;
       let src = rel.source, tgt = rel.target;
-      if (childToParent.has(src)) src = childToParent.get(src);
-      if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+      if (childToParent.has(src)) src = childToParent.get(src) as string;
+      if (childToParent.has(tgt)) tgt = childToParent.get(tgt) as string;
       if (src === tgt) continue;
       if (layerIds.has(src) && layerIds.has(tgt)) withinEdges.push({ src, tgt, rel });
     }
 
     // Find connected vs disconnected nodes
-    const connectedIds = new Set();
+    const connectedIds = new Set<string>();
     withinEdges.forEach(({ src, tgt }) => { connectedIds.add(src); connectedIds.add(tgt); });
     const connected = layerEls.filter((e) => connectedIds.has(e.id));
     const disconnected = layerEls.filter((e) => !connectedIds.has(e.id));
@@ -672,13 +724,13 @@ function computeLayout(elements, relationships, nestElements) {
   // Barycenter + gravity optimization to reduce total edge length
   // =====================================================================
   // Collect all cross-layer edges (mapped to top-level nodes)
-  const crossEdges = [];
+  const crossEdges: { src: string; tgt: string }[] = [];
   for (const rel of relationships) {
     if (nestedEdgeIds.has(rel.id)) continue;
     if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
     let src = rel.source, tgt = rel.target;
-    if (childToParent.has(src)) src = childToParent.get(src);
-    if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+    if (childToParent.has(src)) src = childToParent.get(src) as string;
+    if (childToParent.has(tgt)) tgt = childToParent.get(tgt) as string;
     if (src === tgt) continue;
     const se = elemById.get(src), te = elemById.get(tgt);
     if (!se || !te || se.layer === te.layer) continue;
@@ -686,32 +738,32 @@ function computeLayout(elements, relationships, nestElements) {
   }
 
   // Build adjacency: nodeId → [ids in other layers it connects to]
-  const crossNeighbors = new Map();
+  const crossNeighbors = new Map<string, string[]>();
   for (const { src, tgt } of crossEdges) {
     if (!crossNeighbors.has(src)) crossNeighbors.set(src, []);
     if (!crossNeighbors.has(tgt)) crossNeighbors.set(tgt, []);
-    crossNeighbors.get(src).push(tgt);
-    crossNeighbors.get(tgt).push(src);
+    (crossNeighbors.get(src) as string[]).push(tgt);
+    (crossNeighbors.get(tgt) as string[]).push(src);
   }
 
   // Identify connected components within each layer (nodes linked by dagre edges)
-  function findComponents(layerEls, withinLayerEdges) {
-    const parent = new Map();
+  function findComponents(layerEls: ArchiElement[], withinLayerEdges: { src: string; tgt: string }[]): string[][] {
+    const parent = new Map<string, string>();
     layerEls.forEach((e) => parent.set(e.id, e.id));
-    function find(x) { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; }
-    function union(a, b) { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); }
+    function find(x: string): string { while (parent.get(x) !== x) { const p = parent.get(x) as string; parent.set(x, parent.get(p) as string); x = p; } return x; }
+    function union(a: string, b: string) { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); }
     withinLayerEdges.forEach(({ src, tgt }) => { if (parent.has(src) && parent.has(tgt)) union(src, tgt); });
-    const groups = new Map();
+    const groups = new Map<string, string[]>();
     layerEls.forEach((e) => {
       const root = find(e.id);
       if (!groups.has(root)) groups.set(root, []);
-      groups.get(root).push(e.id);
+      (groups.get(root) as string[]).push(e.id);
     });
     return [...groups.values()];
   }
 
   // Compute barycenter of a group of nodes (average x of their cross-layer neighbors)
-  function groupBarycenter(nodeIds) {
+  function groupBarycenter(nodeIds: string[]): number | null {
     let sumX = 0, count = 0;
     for (const id of nodeIds) {
       const neighbors = crossNeighbors.get(id) || [];
@@ -737,8 +789,8 @@ function computeLayout(elements, relationships, nestElements) {
       for (const rel of relationships) {
         if (nestedEdgeIds.has(rel.id)) continue;
         let src = rel.source, tgt = rel.target;
-        if (childToParent.has(src)) src = childToParent.get(src);
-        if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+        if (childToParent.has(src)) src = childToParent.get(src) as string;
+        if (childToParent.has(tgt)) tgt = childToParent.get(tgt) as string;
         if (src === tgt) continue;
         if (layerIds.has(src) && layerIds.has(tgt)) withinEdges.push({ src, tgt });
       }
@@ -818,7 +870,7 @@ function computeLayout(elements, relationships, nestElements) {
         x: px + col * (NODE_WIDTH + CHILD_GAP) + NODE_WIDTH / 2,
         y: py + row * (NODE_HEIGHT + CHILD_GAP) + NODE_HEIGHT / 2,
         width: NODE_WIDTH, height: NODE_HEIGHT,
-        layer: ce ? ce.layer : pp.layer, _isChild: true,
+        layer: ce?.layer ?? pp.layer, _isChild: true,
       });
     });
   }
@@ -826,28 +878,28 @@ function computeLayout(elements, relationships, nestElements) {
   // --- Build edges with orthogonal routing + port distribution + jog offset ---
 
   // First pass: collect all edges and count ports per node side
-  const edgeInfos = []; // { src, tgt, srcPos, tgtPos, srcLayer, tgtLayer, rel }
-  const srcBottomPorts = new Map(); // nodeId → count of edges leaving bottom
-  const srcTopPorts = new Map();    // nodeId → count of edges leaving top
-  const srcRightPorts = new Map();  // nodeId → count of edges leaving right
-  const tgtTopPorts = new Map();    // nodeId → count of edges entering top
-  const tgtBottomPorts = new Map(); // nodeId → count of edges entering bottom
-  const tgtLeftPorts = new Map();   // nodeId → count of edges entering left
+  const edgeInfos: { src: string; tgt: string; sp: NodePos; tp: NodePos; sL: number; tL: number; rel: ArchiRelationship }[] = [];
+  const srcBottomPorts = new Map<string, number>(); // nodeId → count of edges leaving bottom
+  const srcTopPorts = new Map<string, number>();    // nodeId → count of edges leaving top
+  const srcRightPorts = new Map<string, number>();  // nodeId → count of edges leaving right
+  const tgtTopPorts = new Map<string, number>();    // nodeId → count of edges entering top
+  const tgtBottomPorts = new Map<string, number>(); // nodeId → count of edges entering bottom
+  const tgtLeftPorts = new Map<string, number>();   // nodeId → count of edges entering left
 
   for (const rel of relationships) {
     if (nestedEdgeIds.has(rel.id)) continue;
     if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
 
     let src = rel.source, tgt = rel.target;
-    if (childToParent.has(src)) src = childToParent.get(src);
-    if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
+    if (childToParent.has(src)) src = childToParent.get(src) as string;
+    if (childToParent.has(tgt)) tgt = childToParent.get(tgt) as string;
     if (src === tgt) continue;
 
     const sp = nodePositions.get(src), tp = nodePositions.get(tgt);
     if (!sp || !tp) continue;
     const se = elemById.get(src), te = elemById.get(tgt);
     if (!se || !te) continue;
-    const sL = LAYER_RANK[se.layer] ?? LAYER_RANK.Other, tL = LAYER_RANK[te.layer] ?? LAYER_RANK.Other;
+    const sL = LAYER_RANK[se.layer ?? "Other"] ?? LAYER_RANK.Other, tL = LAYER_RANK[te.layer ?? "Other"] ?? LAYER_RANK.Other;
 
     edgeInfos.push({ src, tgt, sp, tp, sL, tL, rel });
 
@@ -868,14 +920,14 @@ function computeLayout(elements, relationships, nestElements) {
   }
 
   // Port index counters (reset per node per side)
-  const srcBottomIdx = new Map();
-  const srcTopIdx = new Map();
-  const srcRightIdx = new Map();
-  const tgtTopIdx = new Map();
-  const tgtBottomIdx = new Map();
-  const tgtLeftIdx = new Map();
+  const srcBottomIdx = new Map<string, number>();
+  const srcTopIdx = new Map<string, number>();
+  const srcRightIdx = new Map<string, number>();
+  const tgtTopIdx = new Map<string, number>();
+  const tgtBottomIdx = new Map<string, number>();
+  const tgtLeftIdx = new Map<string, number>();
 
-  function getPortX(nodePos, portMap, idxMap, nodeId) {
+  function getPortX(nodePos: NodePos, portMap: Map<string, number>, idxMap: Map<string, number>, nodeId: string): number {
     const total = portMap.get(nodeId) || 1;
     const idx = (idxMap.get(nodeId) || 0);
     idxMap.set(nodeId, idx + 1);
@@ -886,7 +938,7 @@ function computeLayout(elements, relationships, nestElements) {
     return start + (idx / (total - 1)) * span;
   }
 
-  function getPortY(nodePos, portMap, idxMap, nodeId) {
+  function getPortY(nodePos: NodePos, portMap: Map<string, number>, idxMap: Map<string, number>, nodeId: string): number {
     const total = portMap.get(nodeId) || 1;
     const idx = (idxMap.get(nodeId) || 0);
     idxMap.set(nodeId, idx + 1);
@@ -981,7 +1033,13 @@ function computeLayout(elements, relationships, nestElements) {
 
 // Draws the diagram fitted to the container; returns the SVG, its fitted viewBox and its layout key, or null
 // when there is nothing to draw
-function renderDiagram(container, elements, relationships, darkMode, nestElements) {
+function renderDiagram(
+  container: HTMLElement,
+  elements: ArchiElement[],
+  relationships: ArchiRelationship[],
+  darkMode: boolean,
+  nestElements: boolean,
+): { svg: SVGSVGElement; fit: string; key: string } | null {
   container.innerHTML = "";
   if (!elements.length) {
     container.innerHTML = '<div class="aam-empty">No ArchiMate elements to display. Use <code>.load_xml(path)</code> or <code>ArchiMate.from_xml(path)</code>.</div>';
@@ -1021,7 +1079,7 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   mainG.appendChild(nodesG);
   for (const [id, nd] of layout.nodes) {
     const el = elements.find((e) => e.id === id);
-    if (el && !nd._isParent) (isJunction(el.type) ? drawJunction : drawNode)(nodesG, nd, el, darkMode);
+    if (el && !nd._isParent) (isJunction(el.type ?? "") ? drawJunction : drawNode)(nodesG, nd, el, darkMode);
   }
 
   container.appendChild(svg);
@@ -1031,13 +1089,13 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
 
 // Every element's id and box, and the diagram size: equal keys mean a redraw moved nothing (status, badge and
 // theme never move anything)
-function layoutKey(layout) {
+function layoutKey(layout: Layout): string {
   const boxes = [...layout.nodes].map(([id, nd]) => `${id}:${nd.x},${nd.y},${nd.width},${nd.height}`);
   return `${layout.width}x${layout.height};${boxes.join(";")}`;
 }
 
-function drawLayerBands(parentG, layout, svgWidth, darkMode) {
-  const ext = {};
+function drawLayerBands(parentG: SVGGElement, layout: Layout, svgWidth: number, darkMode: boolean): void {
+  const ext: Record<string, { minY: number; maxY: number }> = {};
   for (const [, nd] of layout.nodes) {
     const l = nd.layer || "Other";
     if (nd._isChild) continue;
@@ -1056,10 +1114,10 @@ function drawLayerBands(parentG, layout, svgWidth, darkMode) {
   }
 }
 
-function drawNode(parentG, nd, el, darkMode) {
-  const c = LAYER_COLORS[el.layer] || LAYER_COLORS.Other;
+function drawNode(parentG: SVGGElement, nd: NodePos, el: ArchiElement, _darkMode: boolean): void {
+  const c = LAYER_COLORS[el.layer ?? "Other"] ?? LAYER_COLORS.Other;
   const x = nd.x - NODE_WIDTH / 2, y = nd.y - NODE_HEIGHT / 2;
-  const rx = nodeRx(el.type);
+  const rx = nodeRx(el.type ?? "");
 
   const group = svgEl("g", { class: `aam-node ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
 
@@ -1069,7 +1127,7 @@ function drawNode(parentG, nd, el, darkMode) {
   }));
 
   // ArchiMate icon (top-right)
-  const iconFn = iconFor(el.type);
+  const iconFn = iconFor(el.type ?? "");
   if (iconFn) {
     const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${NODE_WIDTH - 20}, 2)`, color: c.text, opacity: "0.7" });
     iconFn(iconG);
@@ -1107,7 +1165,7 @@ function drawNode(parentG, nd, el, darkMode) {
 }
 
 // A junction is a small dot, filled for And and hollow for Or
-function drawJunction(parentG, nd, el, darkMode) {
+function drawJunction(parentG: SVGGElement, nd: NodePos, el: ArchiElement, darkMode: boolean): void {
   const color = darkMode ? "#d1d5db" : "#333333";
   const group = svgEl("g", { class: `aam-node aam-junction ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${nd.x}, ${nd.y})` });
   const or = el.type === "OrJunction";
@@ -1120,10 +1178,10 @@ function drawJunction(parentG, nd, el, darkMode) {
   parentG.appendChild(group);
 }
 
-function drawContainerNode(parentG, nd, el, darkMode) {
-  const c = LAYER_COLORS[el.layer] || LAYER_COLORS.Other;
+function drawContainerNode(parentG: SVGGElement, nd: NodePos, el: ArchiElement, _darkMode: boolean): void {
+  const c = LAYER_COLORS[el.layer ?? "Other"] ?? LAYER_COLORS.Other;
   const w = nd.width, h = nd.height, x = nd.x - w / 2, y = nd.y - h / 2;
-  const rx = nodeRx(el.type);
+  const rx = nodeRx(el.type ?? "");
 
   const group = svgEl("g", { class: `aam-node aam-container ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
 
@@ -1139,7 +1197,7 @@ function drawContainerNode(parentG, nd, el, darkMode) {
   group.appendChild(text);
 
   // Icon
-  const iconFn = iconFor(el.type);
+  const iconFn = iconFor(el.type ?? "");
   if (iconFn) {
     const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${w - 20}, 3)`, color: c.text, opacity: "0.7" });
     iconFn(iconG);
@@ -1159,12 +1217,12 @@ function drawContainerNode(parentG, nd, el, darkMode) {
   parentG.appendChild(group);
 }
 
-function drawEdge(parentG, edgeData, darkMode) {
+function drawEdge(parentG: SVGGElement, edgeData: EdgeInfo, darkMode: boolean): void {
   const pts = edgeData.points || [];
   if (pts.length < 2) return;
 
   const rel = edgeData.relationship || {};
-  const style = REL_STYLES[rel.type] || REL_STYLES.Serving;
+  const style = REL_STYLES[rel.type ?? ""] ?? REL_STYLES.Serving;
   const strokeColor = darkMode ? "#aaa" : "#666";
 
   let d = `M ${pts[0].x} ${pts[0].y}`;
@@ -1185,7 +1243,7 @@ function drawEdge(parentG, edgeData, darkMode) {
 // Zoom & Pan
 // ============================================================================
 
-function setupZoomPan(svg, fitWidth) {
+function setupZoomPan(svg: SVGSVGElement, fitWidth: number): void {
   let vb = svg.viewBox.baseVal, isPanning = false, startPt = { x: 0, y: 0 };
 
   svg.addEventListener("wheel", (e) => {
@@ -1204,16 +1262,17 @@ function setupZoomPan(svg, fitWidth) {
   svg.style.cursor = "grab";
 }
 
-function svgPoint(svg, event) {
+function svgPoint(svg: SVGSVGElement, event: MouseEvent | WheelEvent): DOMPoint {
   const pt = svg.createSVGPoint(); pt.x = event.clientX; pt.y = event.clientY;
-  return pt.matrixTransform(svg.getScreenCTM().inverse());
+  const ctm = svg.getScreenCTM();
+  return ctm ? pt.matrixTransform(ctm.inverse()) : pt;
 }
 
 // ============================================================================
 // Utilities
 // ============================================================================
 
-function downloadBlob(blob, filename) {
+function downloadBlob(blob: Blob, filename: string): void {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = filename;
@@ -1222,14 +1281,14 @@ function downloadBlob(blob, filename) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
 }
 
-function truncate(s, n) { return !s ? "" : s.length > n ? s.slice(0, n - 1) + "\u2026" : s; }
+function truncate(s: string | null | undefined, n: number): string { return !s ? "" : s.length > n ? s.slice(0, n - 1) + "\u2026" : s; }
 
-function formatType(type) {
+function formatType(type: string | null | undefined): string {
   return String(type ?? "").replace("Application", "App ").replace("Business", "Biz ").replace("Technology", "Tech ")
     .replace("System", "Sys ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
 }
 
-function getTypeBadge(type) {
+function getTypeBadge(type: string): string {
   return ELEMENT_TYPES.get(type)?.badge ?? "";
 }
 
@@ -1242,7 +1301,7 @@ function getTypeBadge(type) {
 // anywidget-vector use the same key, which is harmless since it is only above 0 during a synchronous write.
 const THEME_WRITES = Symbol.for("anywidget.theme-writes");
 
-function render({ model, el }) {
+function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => void {
   const wrapper = document.createElement("div");
   wrapper.className = "aam-wrapper";
   el.appendChild(wrapper);
@@ -1252,7 +1311,7 @@ function render({ model, el }) {
   function detectHostDark() {
     const html = document.documentElement, body = document.body;
     const host = el.closest ? el.closest('[data-theme="light"], [data-theme="dark"]') : null;
-    const theme = [host, html, body].map((n) => n?.dataset.theme).find((t) => t === "light" || t === "dark");
+    const theme = ([host, html, body] as (HTMLElement | null)[]).map((n) => n?.dataset.theme).find((t) => t === "light" || t === "dark");
     const darkClass = [html, body].some((n) => n && (n.classList.contains("dark") || n.classList.contains("dark-theme")));
     const lightClass = [html, body].some((n) => n && n.classList.contains("light"));
     const prefersDark = Boolean(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -1262,22 +1321,23 @@ function render({ model, el }) {
   // Follow the page's theme until dark_mode is chosen: given from Python (_theme_explicit), set by the host later, or
   // switched in the toolbar. The widget's own updates while following are not a choice (THEME_WRITES, seen by every
   // view, since another view of the same widget sees this view's update too).
+  const themeWrites = globalThis as unknown as Record<PropertyKey, number | undefined>;
   function syncTheme() {
     if (model.get("_theme_explicit")) return;
     const dark = detectHostDark();
     if (model.get("dark_mode") !== dark) {
-      globalThis[THEME_WRITES] = (globalThis[THEME_WRITES] ?? 0) + 1;
+      themeWrites[THEME_WRITES] = (themeWrites[THEME_WRITES] ?? 0) + 1;
       try {
         model.set("dark_mode", dark);
       } finally {
-        globalThis[THEME_WRITES] -= 1;
+        themeWrites[THEME_WRITES] = (themeWrites[THEME_WRITES] ?? 1) - 1;
       }
       model.save_changes();
     }
   }
   // Any other change to dark_mode is a choice; it is kept in the model, so later views of the widget respect it too
   function onDarkModeChange() {
-    if ((globalThis[THEME_WRITES] ?? 0) > 0 || model.get("_theme_explicit")) return;
+    if ((themeWrites[THEME_WRITES] ?? 0) > 0 || model.get("_theme_explicit")) return;
     model.set("_theme_explicit", true);
     model.save_changes();
   }
@@ -1332,21 +1392,21 @@ function render({ model, el }) {
   details.className = "aam-details"; details.style.display = "none";
   wrapper.appendChild(details);
 
-  function getFilteredData() {
-    const ae = modelElements(model), ar = model.get("relationships") || [];
-    const els = ae.filter((e) => !hiddenLayers.has(e.layer) && !hiddenElemTypes.has(e.type));
+  function getFilteredData(): { elements: ArchiElement[]; relationships: ArchiRelationship[] } {
+    const ae = modelElements(model), ar = (model.get("relationships") ?? []) as ArchiRelationship[];
+    const els = ae.filter((e) => !hiddenLayers.has(e.layer ?? "") && !hiddenElemTypes.has(e.type ?? ""));
     const vis = new Set(els.map((e) => e.id));
-    const rels = ar.filter((r) => !hiddenRelTypes.has(r.type) && vis.has(r.source) && vis.has(r.target));
+    const rels = ar.filter((r) => !hiddenRelTypes.has(r.type ?? "") && vis.has(r.source) && vis.has(r.target));
     return { elements: els, relationships: rels };
   }
 
   // The fitted viewBox and layout key of the diagram on screen
-  let fitView = null, shownKey = null;
+  let fitView: string | null = null, shownKey: string | null = null;
 
   // Toolbar legend: the layers in the model, in band order
   function updateLegend() {
-    const present = new Set(modelElements(model).map((e) => e.layer));
-    toolbar.querySelector(".aam-legend").replaceChildren(...LAYER_ORDER.filter((l) => present.has(l)).map((layer) => {
+    const present = new Set(modelElements(model).map((e) => e.layer ?? ""));
+    qs(toolbar, ".aam-legend").replaceChildren(...LAYER_ORDER.filter((l) => present.has(l)).map((layer) => {
       const item = document.createElement("span"); item.className = "aam-legend-item";
       const dot = document.createElement("span"); dot.className = "aam-dot";
       dot.style.background = LAYER_COLORS[layer].fill; dot.style.borderColor = LAYER_COLORS[layer].stroke;
@@ -1367,8 +1427,8 @@ function render({ model, el }) {
     fitView = drawn?.fit ?? null;
     shownKey = drawn?.key ?? null;
 
-    const allEls = model.get("elements") || [];
-    graphContainer.querySelectorAll(".aam-node").forEach((node) => {
+    const allEls = (model.get("elements") ?? []) as ArchiElement[];
+    graphContainer.querySelectorAll<HTMLElement>(".aam-node").forEach((node) => {
       node.addEventListener("click", () => {
         const found = allEls.find((e) => e.id === node.dataset.id);
         if (found) { model.set("selected_element", { ...found }); model.save_changes(); showDetails(details, found); applyMarks(); }
@@ -1379,27 +1439,27 @@ function render({ model, el }) {
 
   // Outline the selected element (clicked, or set by the host by id) and the host's highlight_ids
   function applyMarks() {
-    const selected = model.get("selected_element");
+    const selected = model.get("selected_element") as ArchiElement | null;
     const selectedId = selected && selected.id != null ? String(selected.id) : null;
     const marked = highlightIds(model.get("highlight_ids"));
-    graphContainer.querySelectorAll(".aam-node").forEach((node) => {
+    graphContainer.querySelectorAll<HTMLElement>(".aam-node").forEach((node) => {
       node.classList.toggle("aam-selected", node.dataset.id === selectedId);
-      node.classList.toggle("aam-highlight", marked.has(node.dataset.id));
+      node.classList.toggle("aam-highlight", marked.has(node.dataset.id ?? ""));
     });
   }
 
-  toolbar.querySelector(".aam-btn-filter").addEventListener("click", () => filterPanel.element.classList.toggle("aam-panel-open"));
-  toolbar.querySelector(".aam-btn-fit").addEventListener("click", () => {
+  qs(toolbar, ".aam-btn-filter").addEventListener("click", () => filterPanel.element.classList.toggle("aam-panel-open"));
+  qs(toolbar, ".aam-btn-fit").addEventListener("click", () => {
     const s = graphContainer.querySelector("svg.aam-svg");
     if (s && fitView) s.setAttribute("viewBox", fitView);
   });
-  toolbar.querySelector(".aam-btn-dark").addEventListener("click", () => { model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
+  qs(toolbar, ".aam-btn-dark").addEventListener("click", () => { model.set("dark_mode", !model.get("dark_mode")); model.save_changes(); });
 
   // Upload
-  const fileInput = toolbar.querySelector(".aam-file-input");
-  toolbar.querySelector(".aam-btn-upload").addEventListener("click", () => { fileInput.value = ""; fileInput.click(); });
+  const fileInput = qs<HTMLInputElement>(toolbar, ".aam-file-input");
+  qs(toolbar, ".aam-btn-upload").addEventListener("click", () => { fileInput.value = ""; fileInput.click(); });
   fileInput.addEventListener("change", () => {
-    const file = fileInput.files[0];
+    const file = fileInput.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => { model.set("_upload_xml", reader.result); model.save_changes(); };
@@ -1407,10 +1467,10 @@ function render({ model, el }) {
   });
 
   // Export SVG
-  toolbar.querySelector(".aam-btn-export-svg").addEventListener("click", () => {
+  qs(toolbar, ".aam-btn-export-svg").addEventListener("click", () => {
     const svg = graphContainer.querySelector("svg");
     if (!svg) return;
-    const clone = svg.cloneNode(true);
+    const clone = svg.cloneNode(true) as SVGSVGElement;
     // Inline key styles so the SVG is self-contained
     const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
     style.textContent = `
@@ -1427,10 +1487,10 @@ function render({ model, el }) {
   });
 
   // Export PNG
-  toolbar.querySelector(".aam-btn-export-png").addEventListener("click", () => {
+  qs(toolbar, ".aam-btn-export-png").addEventListener("click", () => {
     const svg = graphContainer.querySelector("svg");
     if (!svg) return;
-    const clone = svg.cloneNode(true);
+    const clone = svg.cloneNode(true) as SVGSVGElement;
     const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
     style.textContent = `
       .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -1440,8 +1500,8 @@ function render({ model, el }) {
     clone.insertBefore(style, clone.firstChild);
     const vb = clone.getAttribute("viewBox");
     let w = 1200, h = 800;
-    if (vb) { const parts = vb.split(" "); w = Math.ceil(parts[2] * 2); h = Math.ceil(parts[3] * 2); }
-    clone.setAttribute("width", w); clone.setAttribute("height", h);
+    if (vb) { const parts = vb.split(" "); w = Math.ceil(Number(parts[2]) * 2); h = Math.ceil(Number(parts[3]) * 2); }
+    clone.setAttribute("width", String(w)); clone.setAttribute("height", String(h));
     const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
     const img = new Image();
@@ -1449,6 +1509,7 @@ function render({ model, el }) {
       const canvas = document.createElement("canvas");
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext("2d");
+      if (!ctx) return;
       ctx.fillStyle = model.get("dark_mode") ? "#1e1e3a" : "#fdfdfd";
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
@@ -1458,7 +1519,7 @@ function render({ model, el }) {
     img.src = url;
   });
 
-  const listeners = [
+  const listeners: [string, () => void][] = [
     ["change:elements", rebuildDiagram],
     ["change:relationships", rebuildDiagram],
     ["change:dark_mode", rebuildDiagram],
@@ -1480,15 +1541,15 @@ function render({ model, el }) {
   };
 }
 
-function showDetails(container, el) {
+function showDetails(container: HTMLElement, el: ArchiElement): void {
   container.style.display = "block";
   // Fixed markup only: model values go in as text, so markup in a name or documentation stays inert
   container.innerHTML = `
     <div class="aam-details-header"><strong></strong><button class="aam-btn aam-details-close">&times;</button></div>
     <div class="aam-details-body"></div>`;
-  container.querySelector(".aam-details-header strong").textContent = el.name ?? "";
-  const body = container.querySelector(".aam-details-body");
-  const row = (label, value) => {
+  qs(container, ".aam-details-header strong").textContent = el.name ?? "";
+  const body = qs(container, ".aam-details-body");
+  const row = (label: string, value: Node | string) => {
     const div = document.createElement("div");
     const lbl = document.createElement("span"); lbl.className = "aam-detail-label"; lbl.textContent = `${label}:`;
     div.append(lbl, " ", value);
@@ -1502,5 +1563,7 @@ function showDetails(container, el) {
     const doc = document.createElement("div"); doc.className = "aam-detail-doc"; doc.textContent = el.documentation;
     body.appendChild(doc);
   }
-  container.querySelector(".aam-details-close").addEventListener("click", () => { container.style.display = "none"; });
+  qs(container, ".aam-details-close").addEventListener("click", () => { container.style.display = "none"; });
 }
+
+export default { render };

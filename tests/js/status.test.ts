@@ -1,4 +1,4 @@
-// Tests for the widget's pure helpers. Run with: node --test tests/js/*.test.mjs
+// Tests for the widget's pure helpers. Run with: node --test tests/js/*.test.ts
 // (pytest runs them too, see tests/test_ui.py).
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -11,7 +11,7 @@ import {
   markerId,
   resolveDark,
   statusClass,
-} from "../../src/anywidget_archimate/ui/status.js";
+} from "../../src/anywidget_archimate/ui/status.ts";
 
 test("each comparison status maps to its own class; stable and unknown get none", () => {
   assert.equal(statusClass("partial"), "aam-status-partial");

@@ -1,0 +1,18 @@
+{
+  "name": "anywidget-archimate",
+  "private": true,
+  "type": "module",
+  "description": "Front end of the anywidget-archimate widget, in TypeScript (bundled with esbuild; type-checked with tsc)",
+  "scripts": {
+    "build": "node scripts/build-esm.mjs",
+    "check": "node scripts/build-esm.mjs --check",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/js/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/jsdom": "30.0.0",
+    "@types/node": "26.6.6",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

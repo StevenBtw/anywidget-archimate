@@ -29,17 +29,18 @@ ${[...STATUS_ACCENTS]
 `;
 
 // Marker id for a relationship's arrowhead or tail: "arrow-filled", or "arrow-filled-only-a" on a recolored edge
-export function markerId(marker, status) {
-  return STATUS_ACCENTS.has(status) ? `${marker}-${statusClass(status).slice("aam-status-".length)}` : marker;
+export function markerId(marker: string, status: string | null | undefined): string {
+  return STATUS_ACCENTS.has(status ?? "") ? `${marker}-${statusClass(status).slice("aam-status-".length)}` : marker;
 }
 
 // CSS class for an element or relationship status; "stable" and unknown values get none
-export function statusClass(status) {
-  return STATUSES.has(status) ? `aam-status-${status.replace("_", "-")}` : "";
+export function statusClass(status: string | null | undefined): string {
+  const key = status ?? "";
+  return STATUSES.has(key) ? `aam-status-${key.replace("_", "-")}` : "";
 }
 
 // Short single-line badge text ("2/3", "only in run 1"), cut by character (not UTF-16 unit) to fit on an element
-export function badgeText(item) {
+export function badgeText(item: { badge?: unknown }): string {
   if (item.badge === undefined || item.badge === null) return "";
   const chars = Array.from(String(item.badge).replace(/\s+/g, " ").trim());
   return chars.length > BADGE_MAX ? chars.slice(0, BADGE_MAX - 1).join("") + "…" : chars.join("");
@@ -47,7 +48,17 @@ export function badgeText(item) {
 
 // Dark or light: an explicit host theme ("light"/"dark") wins, then a dark class, then a light class,
 // then the operating system
-export function resolveDark({ theme, darkClass, lightClass, prefersDark }) {
+export function resolveDark({
+  theme,
+  darkClass,
+  lightClass,
+  prefersDark,
+}: {
+  theme?: unknown;
+  darkClass?: unknown;
+  lightClass?: unknown;
+  prefersDark?: unknown;
+}): boolean {
   if (theme === "light") return false;
   if (theme === "dark") return true;
   if (darkClass) return true;
@@ -56,6 +67,6 @@ export function resolveDark({ theme, darkClass, lightClass, prefersDark }) {
 }
 
 // The ids the host asked to outline
-export function highlightIds(ids) {
+export function highlightIds(ids: unknown): Set<string> {
   return new Set(Array.isArray(ids) ? ids.map(String) : []);
 }

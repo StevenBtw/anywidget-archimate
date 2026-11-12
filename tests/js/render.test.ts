@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
-let JSDOM = null;
+type JSDOMType = import("jsdom").JSDOM;
+let JSDOM: typeof import("jsdom").JSDOM | null = null;
 try {
   ({ JSDOM } = await import("jsdom"));
 } catch {
@@ -37,7 +38,7 @@ const ELEMENTS = [
   ["t3", "PostgreSQL", "SystemSoftware", "Technology"],
   ["t4", "Hosting", "TechnologyService", "Technology"],
   ["t5", "Backup server", "Node", "Technology"],
-].map(([id, name, type, layer]) => ({ id, name, type, layer, documentation: "" }));
+].map(([id, name, type, layer]: string[]) => ({ id, name, type, layer, documentation: "" }));
 
 const RELATIONSHIPS = [
   ["r1", "b1", "b2", "Assignment"],
@@ -50,20 +51,22 @@ const RELATIONSHIPS = [
   ["r8", "t4", "a1", "Serving"],
   ["r9", "t1", "t4", "Realization"],
   ["r10", "t3", "t2", "Association"],
-].map(([id, source, target, type]) => ({ id, source, target, type, name: "" }));
+].map(([id, source, target, type]: string[]) => ({ id, source, target, type, name: "" }));
 
-function makeModel(values) {
-  const state = { width: "100%", height: 600, dark_mode: false, selected_element: null, highlight_ids: [], ...values };
-  const handlers = new Map();
+type TestModel = ReturnType<typeof makeModel>;
+
+function makeModel(values: Record<string, unknown> = {}) {
+  const state: Record<string, any> = { width: "100%", height: 600, dark_mode: false, selected_element: null, highlight_ids: [], ...values };
+  const handlers = new Map<string, (() => void)[]>();
   return {
-    get: (key) => state[key],
-    set(key, value) {
+    get: (key: string) => state[key],
+    set(key: string, value: any) {
       const changed = state[key] !== value;
       state[key] = value;
       if (changed) for (const fn of handlers.get(`change:${key}`) ?? []) fn();
     },
-    on: (event, fn) => handlers.set(event, [...(handlers.get(event) ?? []), fn]),
-    off: (event, fn) => handlers.set(event, (handlers.get(event) ?? []).filter((h) => h !== fn)),
+    on: (event: string, fn: () => void) => handlers.set(event, [...(handlers.get(event) ?? []), fn]),
+    off: (event: string, fn: () => void) => handlers.set(event, (handlers.get(event) ?? []).filter((h) => h !== fn)),
     save_changes() {},
     send() {},
     listenerCount: () => [...handlers.values()].reduce((n, list) => n + list.length, 0),
@@ -71,14 +74,25 @@ function makeModel(values) {
 }
 
 // Render into #host (the body holds just that unless `body` says otherwise); returns what a test needs
-async function mount({ values = {}, body = '<div id="host"></div>', htmlAttrs = "", prefersDark = false } = {}) {
-  assert.equal(MISSING, null, MISSING);
+async function mount({ values = {}, body = '<div id="host"></div>', htmlAttrs = "", prefersDark = false }: {
+  values?: Record<string, unknown>;
+  body?: string;
+  htmlAttrs?: string;
+  prefersDark?: boolean;
+} = {}) {
+  if (!JSDOM || !MODULE) assert.fail(MISSING ?? "jsdom or AAM_WIDGET_MODULE missing");
   const dom = new JSDOM(`<!doctype html><html ${htmlAttrs}><body>${body}</body></html>`);
-  dom.window.matchMedia = (query) => ({ matches: prefersDark && query.includes("dark"), addEventListener() {}, removeEventListener() {} });
+  dom.window.matchMedia = ((query: string) => ({
+    matches: prefersDark && query.includes("dark"),
+    addEventListener() {},
+    removeEventListener() {},
+  })) as unknown as typeof dom.window.matchMedia;
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver });
-  const { default: widget } = await import(pathToFileURL(MODULE).href);
+  const widget = (await import(pathToFileURL(MODULE as string).href)).default as {
+    render: (args: { model: TestModel; el: HTMLElement }) => () => void;
+  };
   const model = makeModel({ elements: ELEMENTS, relationships: RELATIONSHIPS, ...values });
-  const el = dom.window.document.querySelector("#host");
+  const el = dom.window.document.querySelector("#host") as HTMLElement;
   const cleanup = widget.render({ model, el });
   assert.equal(typeof cleanup, "function", "render returns a cleanup function");
   let cleaned = false;
@@ -96,18 +110,25 @@ async function mount({ values = {}, body = '<div id="host"></div>', htmlAttrs = 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 // jsdom has no layout, so map client coordinates 1:1 onto the diagram to let wheel events zoom
-function stubScreen(dom) {
-  const proto = dom.window.SVGSVGElement.prototype;
+function stubScreen(dom: JSDOMType): void {
+  const proto = dom.window.SVGSVGElement.prototype as any;
   proto.createSVGPoint = () => ({ x: 0, y: 0, matrixTransform() { return { x: this.x, y: this.y }; } });
   proto.getScreenCTM = () => ({ inverse: () => null });
 }
 
-const view = (el) => el.querySelector("svg.aam-svg").getAttribute("viewBox");
-const viewWidth = (el) => Number(view(el).split(" ")[2]);
+// querySelector, but a test that cannot find its node should fail on the spot
+function q<T extends Element>(root: ParentNode, selector: string): T {
+  const found = root.querySelector<T>(selector);
+  if (!found) throw new Error(`test markup is missing ${selector}`);
+  return found;
+}
+
+const view = (el: Element): string => q(el, "svg.aam-svg").getAttribute("viewBox") ?? "";
+const viewWidth = (el: Element): number => Number(view(el).split(" ")[2]);
 
 // Scroll over the diagram: negative steps zoom in, positive zoom out
-function wheel(dom, el, steps) {
-  const svg = el.querySelector("svg.aam-svg");
+function wheel(dom: JSDOMType, el: Element, steps: number): void {
+  const svg = q<SVGSVGElement>(el, "svg.aam-svg");
   for (let i = 0; i < Math.abs(steps); i++) {
     svg.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: Math.sign(steps) * 100, clientX: 100, clientY: 100, cancelable: true }));
   }
@@ -116,9 +137,9 @@ function wheel(dom, el, steps) {
 test("renders every element and relationship of the model", { skip }, async () => {
   const { el, close } = await mount();
   try {
-    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id).sort();
+    const ids = [...el.querySelectorAll<HTMLElement>(".aam-node")].map((node) => node.dataset.id).sort();
     assert.deepEqual(ids, ELEMENTS.map((e) => e.id).sort());
-    assert.equal(el.querySelectorAll("path.aam-edge").length, RELATIONSHIPS.length);
+    assert.equal(el.querySelectorAll<SVGElement>("path.aam-edge").length, RELATIONSHIPS.length);
   } finally {
     close();
   }
@@ -128,26 +149,26 @@ test("comparison status and badges render, and relationships keep their ArchiMat
   const elements = ELEMENTS.map((e) =>
     e.id === "a1" ? { ...e, status: "changed", badge: "2/3" } : e.id === "a5" ? { ...e, status: "only_a", badge: "" } : { ...e, status: "stable", badge: "" },
   );
-  const relStatus = { r6: "partial", r4: "only_b" };
+  const relStatus: Record<string, string> = { r6: "partial", r4: "only_b" };
   const relationships = RELATIONSHIPS.map((r) => ({ ...r, status: relStatus[r.id] ?? "stable" }));
   const { el, close } = await mount({ values: { elements, relationships } });
   try {
-    const node = (id) => el.querySelector(`.aam-node[data-id="${id}"]`);
+    const node = (id: string): HTMLElement => q<HTMLElement>(el, `.aam-node[data-id="${id}"]`);
     assert.ok(node("a1").classList.contains("aam-status-changed"));
     assert.ok(node("a5").classList.contains("aam-status-only-a"));
-    assert.doesNotMatch(node("b1").getAttribute("class"), /aam-status/);
-    assert.equal(node("a1").querySelector(".aam-node-badge").textContent, "2/3");
-    assert.equal(el.querySelectorAll(".aam-node-badge").length, 1);
+    assert.doesNotMatch(node("b1").getAttribute("class") ?? "", /aam-status/);
+    assert.equal(q(node("a1"), ".aam-node-badge").textContent, "2/3");
+    assert.equal(el.querySelectorAll<HTMLElement>(".aam-node-badge").length, 1);
 
-    const partial = el.querySelectorAll("path.aam-edge.aam-status-partial");
+    const partial = el.querySelectorAll<SVGElement>("path.aam-edge.aam-status-partial");
     assert.equal(partial.length, 1);
     assert.equal(partial[0].getAttribute("stroke-dasharray"), "6 4"); // Flow's dash
     assert.equal(partial[0].getAttribute("marker-end"), "url(#arrow-filled)"); // faded, not recolored
 
     // A recolored relationship (only_b, Serving) ends in an arrowhead of its own color
-    const onlyB = el.querySelector("path.aam-edge.aam-status-only-b");
+    const onlyB = q<SVGElement>(el, "path.aam-edge.aam-status-only-b");
     assert.equal(onlyB.getAttribute("marker-end"), "url(#arrow-hollow-only-b)");
-    assert.equal(el.querySelector("#arrow-hollow-only-b path").getAttribute("stroke"), "#2e9b4f");
+    assert.equal(q<SVGElement>(el, "#arrow-hollow-only-b path").getAttribute("stroke"), "#2e9b4f");
 
     // The comparison styling travels with the SVG, so SVG and PNG exports keep it
     const style = el.querySelector("svg.aam-svg > style");
@@ -162,7 +183,7 @@ test("comparison status and badges render, and relationships keep their ArchiMat
 test("the host can select one element and highlight several", { skip }, async () => {
   const { el, model, close } = await mount();
   try {
-    const marked = (cls) => [...el.querySelectorAll(`.aam-node.${cls}`)].map((n) => n.dataset.id).sort();
+    const marked = (cls: string) => [...el.querySelectorAll<HTMLElement>(`.aam-node.${cls}`)].map((n) => n.dataset.id).sort();
     model.set("selected_element", { id: "a2" });
     model.set("highlight_ids", ["t1", "t3"]);
     assert.deepEqual(marked("aam-selected"), ["a2"]);
@@ -186,12 +207,12 @@ test("a theme switch or a status-only update keeps the zoom and pan", { skip }, 
     assert.notEqual(zoomed, fitted);
 
     model.set("dark_mode", true);
-    assert.ok(el.querySelector(".aam-wrapper").classList.contains("aam-dark"));
+    assert.ok(q<HTMLElement>(el, ".aam-wrapper").classList.contains("aam-dark"));
     assert.equal(view(el), zoomed);
 
     model.set("elements", ELEMENTS.map((e) => ({ ...e, status: "changed", badge: "2/3" })));
     model.set("relationships", RELATIONSHIPS.map((r) => ({ ...r, status: "partial" })));
-    assert.equal(el.querySelectorAll(".aam-node.aam-status-changed").length, ELEMENTS.length);
+    assert.equal(el.querySelectorAll<HTMLElement>(".aam-node.aam-status-changed").length, ELEMENTS.length);
     assert.equal(view(el), zoomed);
 
     model.set("height", 400);
@@ -221,7 +242,7 @@ test("Fit returns to the whole diagram, and a change that moves elements refits"
     stubScreen(dom);
     const fitted = view(el);
     wheel(dom, el, -3);
-    el.querySelector(".aam-btn-fit").click();
+    q<HTMLElement>(el, ".aam-btn-fit").click();
     assert.equal(view(el), fitted);
 
     wheel(dom, el, 2);
@@ -241,7 +262,7 @@ test("a container's header band is marked so its status can color it", { skip },
   const relationships = [{ id: "r", source: "p", target: "c", type: "Composition", name: "" }];
   const { el, close } = await mount({ values: { elements, relationships } });
   try {
-    const container = el.querySelector('.aam-node.aam-container[data-id="p"]');
+    const container = q<HTMLElement>(el, '.aam-node.aam-container[data-id="p"]');
     assert.ok(container.classList.contains("aam-status-changed"));
     assert.equal(container.querySelectorAll(".aam-node-header").length, 2);
   } finally {
@@ -256,7 +277,7 @@ test("removing the widget detaches it from the model", { skip }, async () => {
     unmount();
     assert.equal(model.listenerCount(), 0);
     model.set("highlight_ids", ["t1"]); // no longer reaches the removed view
-    assert.equal(el.querySelectorAll(".aam-highlight").length, 0);
+    assert.equal(el.querySelectorAll<HTMLElement>(".aam-highlight").length, 0);
   } finally {
     close();
   }
@@ -275,7 +296,7 @@ test("the widget follows a theme change on an ancestor, not only on html and bod
   const { dom, model, close } = await mount({ body: '<section id="pane" data-theme="dark"><div id="host"></div></section>' });
   try {
     assert.equal(model.get("dark_mode"), true);
-    dom.window.document.querySelector("#pane").dataset.theme = "light";
+    q<HTMLElement>(dom.window.document, "#pane").dataset.theme = "light";
     await settle();
     assert.equal(model.get("dark_mode"), false);
   } finally {
@@ -302,9 +323,10 @@ test("the details panel shows markup in element data as text, not as HTML", { sk
   };
   const { dom, el, close } = await mount({ values: { elements: [hostile], relationships: [] } });
   try {
-    const node = [...el.querySelectorAll(".aam-node")].find((n) => n.dataset.id === hostile.id);
+    const node = [...el.querySelectorAll<HTMLElement>(".aam-node")].find((n) => n.dataset.id === hostile.id);
+    if (!node) assert.fail("node not found");
     node.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-    const details = el.querySelector(".aam-details");
+    const details = q<HTMLElement>(el, ".aam-details");
     assert.equal(details.style.display, "block");
     assert.equal(details.querySelectorAll("img, b, script").length, 0);
     for (const value of [hostile.id, hostile.name, hostile.layer, hostile.documentation]) {
@@ -325,10 +347,10 @@ test("layer names match in any case; a missing layer comes from the type, and an
   ];
   const { el, close } = await mount({ values: { elements, relationships: [] } });
   try {
-    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id).sort();
+    const ids = [...el.querySelectorAll<HTMLElement>(".aam-node")].map((node) => node.dataset.id).sort();
     assert.deepEqual(ids, ["x1", "x2", "x3", "x4", "x5"]);
     // A missing layer comes from the type (Node is Technology); an unknown layer and type is Other
-    const bands = [...el.querySelectorAll(".aam-layer-label")].map((label) => label.textContent).sort();
+    const bands = [...el.querySelectorAll<HTMLElement>(".aam-layer-label")].map((label) => label.textContent).sort();
     assert.deepEqual(bands, ["Application Layer", "Other Layer", "Strategy Layer", "Technology Layer"]);
   } finally {
     close();
@@ -343,7 +365,7 @@ test("an element without a type, or with a type that is not text, still draws wi
   ];
   const { el, close } = await mount({ values: { elements, relationships: [] } });
   try {
-    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id).sort();
+    const ids = [...el.querySelectorAll<HTMLElement>(".aam-node")].map((node) => node.dataset.id).sort();
     assert.deepEqual(ids, ["y1", "y2", "y3"]);
   } finally {
     close();
@@ -358,14 +380,17 @@ test("the filter panel names a missing type and hides elements by a type that is
   ];
   const { el, close } = await mount({ values: { elements, relationships: [] } });
   try {
-    const names = [...el.querySelectorAll(".aam-filter-item .aam-filter-name")].map((n) => n.textContent);
+    const names = [...el.querySelectorAll<HTMLElement>(".aam-filter-item .aam-filter-name")].map((n) => n.textContent);
     assert.ok(!names.includes("undefined"), `no "undefined" entry in ${names}`);
     assert.ok(names.includes("(no type)"));
-    const checkbox = (name) =>
-      [...el.querySelectorAll(".aam-filter-item")].find((i) => i.querySelector(".aam-filter-name").textContent === name).querySelector("input");
+    const checkbox = (name: string): HTMLInputElement => {
+      const item = [...el.querySelectorAll<HTMLElement>(".aam-filter-item")].find((i) => i.querySelector(".aam-filter-name")?.textContent === name);
+      if (!item) throw new Error(`no filter item named ${name}`);
+      return q<HTMLInputElement>(item, "input");
+    };
     checkbox("(no type)").click();
     checkbox("42").click();
-    const ids = [...el.querySelectorAll(".aam-node")].map((node) => node.dataset.id);
+    const ids = [...el.querySelectorAll<HTMLElement>(".aam-node")].map((node) => node.dataset.id);
     assert.deepEqual(ids, ["z1"]);
   } finally {
     close();
@@ -375,7 +400,7 @@ test("the filter panel names a missing type and hides elements by a type that is
 test("layer band labels switch to the brighter layer color in dark mode", { skip }, async () => {
   const { model, el, close } = await mount({ values: { dark_mode: false } });
   try {
-    const fills = () => Object.fromEntries([...el.querySelectorAll(".aam-layer-label")].map((l) => [l.textContent, l.getAttribute("fill")]));
+    const fills = () => Object.fromEntries([...el.querySelectorAll<HTMLElement>(".aam-layer-label")].map((l) => [l.textContent, l.getAttribute("fill")]));
     assert.equal(fills()["Business Layer"], "#555500");
     model.set("dark_mode", true);
     assert.equal(fills()["Business Layer"], "#C8C800");
@@ -391,10 +416,10 @@ test("a dark_mode passed from Python wins over the page theme and stays when the
   });
   try {
     assert.equal(model.get("dark_mode"), false);
-    assert.equal(el.querySelector(".aam-wrapper").classList.contains("aam-dark"), false);
-    dom.window.document.querySelector("#pane").dataset.theme = "light";
+    assert.equal(q<HTMLElement>(el, ".aam-wrapper").classList.contains("aam-dark"), false);
+    q<HTMLElement>(dom.window.document, "#pane").dataset.theme = "light";
     await settle();
-    dom.window.document.querySelector("#pane").dataset.theme = "dark";
+    q<HTMLElement>(dom.window.document, "#pane").dataset.theme = "dark";
     await settle();
     assert.equal(model.get("dark_mode"), false);
   } finally {
@@ -405,8 +430,8 @@ test("a dark_mode passed from Python wins over the page theme and stays when the
 test("following the page continues after the widget's own theme updates", { skip }, async () => {
   const { dom, model, close } = await mount({ body: '<section id="pane" data-theme="dark"><div id="host"></div></section>' });
   try {
-    const pane = dom.window.document.querySelector("#pane");
-    for (const [theme, dark] of [["light", false], ["dark", true], ["light", false]]) {
+    const pane = q<HTMLElement>(dom.window.document, "#pane");
+    for (const [theme, dark] of [["light", false], ["dark", true], ["light", false]] as [string, boolean][]) {
       pane.dataset.theme = theme;
       await settle();
       assert.equal(model.get("dark_mode"), dark, `follows data-theme="${theme}"`);
@@ -422,7 +447,7 @@ test("a dark_mode the host sets after render stops following the page, also for 
   try {
     model.set("dark_mode", false);
     assert.equal(model.get("_theme_explicit"), true);
-    const pane = dom.window.document.querySelector("#pane");
+    const pane = q<HTMLElement>(dom.window.document, "#pane");
     pane.dataset.theme = "light";
     await settle();
     pane.dataset.theme = "dark";
@@ -435,13 +460,13 @@ test("a dark_mode the host sets after render stops following the page, also for 
 
 test("two views of one widget both keep following the page", { skip }, async () => {
   const { dom, model, close } = await mount({ htmlAttrs: 'data-theme="dark"' });
-  const { default: widget } = await import(pathToFileURL(MODULE).href);
+  const { default: widget } = await import(pathToFileURL(MODULE as string).href);
   const second = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(second);
   const cleanupSecond = widget.render({ model, el: second });
   try {
     const html = dom.window.document.documentElement;
-    for (const [theme, dark] of [["light", false], ["dark", true]]) {
+    for (const [theme, dark] of [["light", false], ["dark", true]] as [string, boolean][]) {
       html.dataset.theme = theme;
       await settle();
       assert.equal(model.get("dark_mode"), dark, `follows data-theme="${theme}"`);
@@ -456,14 +481,14 @@ test("two views of one widget both keep following the page", { skip }, async () 
 test("views from two copies of the module, each with its own model proxy, keep following the page", { skip }, async () => {
   const { dom, model, close } = await mount({ htmlAttrs: 'data-theme="dark"' });
   // A second copy of the module (a cell run again, a reconnect) and a per-view proxy, as anywidget hands each view
-  const { default: copy } = await import(`${pathToFileURL(MODULE).href}?copy=2`);
-  const proxy = { ...model, get: (k) => model.get(k), set: (k, v) => model.set(k, v), on: (e, f) => model.on(e, f), off: (e, f) => model.off(e, f) };
+  const { default: copy } = await import(`${pathToFileURL(MODULE as string).href}?copy=2`);
+  const proxy = { ...model, get: (k: string) => model.get(k), set: (k: string, v: any) => model.set(k, v), on: (e: string, f: () => void) => model.on(e, f), off: (e: string, f: () => void) => model.off(e, f) };
   const second = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(second);
   const cleanupSecond = copy.render({ model: proxy, el: second });
   try {
     const html = dom.window.document.documentElement;
-    for (const [theme, dark] of [["light", false], ["dark", true]]) {
+    for (const [theme, dark] of [["light", false], ["dark", true]] as [string, boolean][]) {
       html.dataset.theme = theme;
       await settle();
       assert.equal(model.get("dark_mode"), dark, `follows data-theme="${theme}"`);
@@ -478,9 +503,9 @@ test("views from two copies of the module, each with its own model proxy, keep f
 test("the height sizes the diagram and filter panel row, so a long filter panel scrolls inside it", { skip }, async () => {
   const { model, el, close } = await mount({ values: { height: 300 } });
   try {
-    const row = el.querySelector(".aam-content");
+    const row = q<HTMLElement>(el, ".aam-content");
     assert.equal(row.style.height, "300px");
-    assert.equal(el.querySelector(".aam-graph-container").style.height, "");
+    assert.equal(q<HTMLElement>(el, ".aam-graph-container").style.height, "");
     model.set("height", 450);
     assert.equal(row.style.height, "450px");
   } finally {
@@ -504,29 +529,33 @@ const ALL_TYPES = {
   Other: ["Location", "Grouping", "AndJunction", "OrJunction"],
 };
 const JUNCTIONS = new Set(["AndJunction", "OrJunction", "Junction"]);
-const translateOf = (node) => /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(node.getAttribute("transform")).slice(1).map(Number);
+const translateOf = (node: Element): number[] => {
+  const m = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(node.getAttribute("transform") ?? "");
+  if (!m) throw new Error("node without a translate");
+  return m.slice(1).map(Number);
+};
 
 test("every ArchiMate 3.2 element type draws in its own layer band, with an icon and a filter badge", { skip }, async () => {
   // No layer given: the widget takes it from the type
   const elements = Object.values(ALL_TYPES).flat().map((type) => ({ id: type, name: type, type, documentation: "" }));
   const { el, close } = await mount({ values: { elements, relationships: [] } });
   try {
-    assert.equal(el.querySelectorAll(".aam-node").length, elements.length);
+    assert.equal(el.querySelectorAll<HTMLElement>(".aam-node").length, elements.length);
     // Bands top to bottom: Motivation, Strategy, Business, Application, Technology, Implementation, Other
-    const labels = [...el.querySelectorAll(".aam-layer-label")].sort((a, b) => Number(a.getAttribute("y")) - Number(b.getAttribute("y")));
+    const labels = [...el.querySelectorAll<HTMLElement>(".aam-layer-label")].sort((a, b) => Number(a.getAttribute("y")) - Number(b.getAttribute("y")));
     assert.deepEqual(labels.map((l) => l.textContent), Object.keys(ALL_TYPES).map((layer) => `${layer} Layer`));
     const top = labels.map((l) => Number(l.getAttribute("y")));
     for (const [i, [layer, types]] of Object.entries(ALL_TYPES).entries()) {
       for (const type of types) {
-        const node = el.querySelector(`.aam-node[data-id="${type}"]`);
+        const node = q<HTMLElement>(el, `.aam-node[data-id="${type}"]`);
         const y = translateOf(node)[1];
         assert.ok(y > top[i] && (i + 1 === top.length || y < top[i + 1]), `${type} sits in the ${layer} band`);
         if (!JUNCTIONS.has(type)) assert.ok(node.querySelector(".aam-node-icon"), `${type} has an icon`);
       }
     }
-    for (const item of el.querySelectorAll(".aam-filter-item")) {
-      const name = item.querySelector(".aam-filter-name").textContent;
-      if (name.endsWith(" Layer") || name === "Nest elements") continue;
+    for (const item of el.querySelectorAll<HTMLElement>(".aam-filter-item")) {
+      const name = item.querySelector(".aam-filter-name")?.textContent;
+      if (!name || name.endsWith(" Layer") || name === "Nest elements") continue;
       assert.ok(item.querySelector(".aam-filter-badge")?.textContent, `${name} has a filter badge`);
     }
   } finally {
@@ -547,16 +576,20 @@ test("a junction draws as a small dot, filled for And and hollow for Or, and rel
   ];
   const { el, close } = await mount({ values: { elements, relationships } });
   try {
-    const and = el.querySelector('.aam-junction[data-id="j1"]'), or = el.querySelector('.aam-junction[data-id="j2"]');
+    const and = q<HTMLElement>(el, '.aam-junction[data-id="j1"]'), or = q<HTMLElement>(el, '.aam-junction[data-id="j2"]');
     assert.ok(and && or, "both junctions are drawn as junctions");
     assert.equal(and.querySelector("rect"), null);
-    assert.notEqual(and.querySelector("circle").getAttribute("fill"), "none");
-    assert.equal(or.querySelector("circle").getAttribute("fill"), "none");
-    assert.ok(Number(and.querySelector("circle").getAttribute("r")) <= 8);
+    assert.notEqual(q<SVGCircleElement>(and, "circle").getAttribute("fill"), "none");
+    assert.equal(q<SVGCircleElement>(or, "circle").getAttribute("fill"), "none");
+    assert.ok(Number(q<SVGCircleElement>(and, "circle").getAttribute("r")) <= 8);
     // Both relationships end within a few pixels of the dot's center
     const [cx, cy] = translateOf(and);
-    const ends = [...el.querySelectorAll(".aam-edge")].map((path) => path.getAttribute("d").match(/-?[\d.]+/g).map(Number));
-    const touches = ends.filter((n) => [[n[0], n[1]], [n.at(-2), n.at(-1)]].some(([x, y]) => Math.hypot(x - cx, y - cy) <= 10));
+    const ends = [...el.querySelectorAll<SVGElement>(".aam-edge")].map((path) => {
+      const nums = (path.getAttribute("d") ?? "").match(/-?[\d.]+/g);
+      if (!nums) throw new Error("edge without a path");
+      return nums.map(Number);
+    });
+    const touches = ends.filter((n) => [[n[0], n[1]], [n.at(-2), n.at(-1)]].some(([x = 0, y = 0]) => Math.hypot(x - cx, y - cy) <= 10));
     assert.equal(touches.length, 2);
   } finally {
     close();
@@ -566,7 +599,7 @@ test("a junction draws as a small dot, filled for And and hollow for Or, and rel
 test("the toolbar legend lists the layers in the model, in band order", { skip }, async () => {
   const { model, el, close } = await mount();
   try {
-    const legend = () => [...el.querySelectorAll(".aam-legend-item")].map((item) => item.textContent);
+    const legend = () => [...el.querySelectorAll<HTMLElement>(".aam-legend-item")].map((item) => item.textContent);
     assert.deepEqual(legend(), ["Business", "Application", "Technology"]);
     model.set("elements", [
       { id: "g", name: "Grow", type: "Goal", documentation: "" },
@@ -586,7 +619,7 @@ test("layer aliases: Implementation & Migration and Physical", { skip }, async (
   ];
   const { el, close } = await mount({ values: { elements, relationships: [] } });
   try {
-    const bands = [...el.querySelectorAll(".aam-layer-label")].map((label) => label.textContent).sort();
+    const bands = [...el.querySelectorAll<HTMLElement>(".aam-layer-label")].map((label) => label.textContent).sort();
     assert.deepEqual(bands, ["Implementation Layer", "Technology Layer"]);
   } finally {
     close();
@@ -609,11 +642,11 @@ test("a junction sits in the band of the elements it joins", { skip }, async () 
   ];
   const { el, close } = await mount({ values: { elements, relationships } });
   try {
-    const bands = [...el.querySelectorAll(".aam-layer-label")].map((label) => label.textContent).sort();
+    const bands = [...el.querySelectorAll<HTMLElement>(".aam-layer-label")].map((label) => label.textContent).sort();
     assert.deepEqual(bands, ["Application Layer", "Business Layer"]);
-    const businessTop = Number([...el.querySelectorAll(".aam-layer-label")].find((l) => l.textContent === "Business Layer").getAttribute("y"));
-    const applicationTop = Number([...el.querySelectorAll(".aam-layer-label")].find((l) => l.textContent === "Application Layer").getAttribute("y"));
-    const y = translateOf(el.querySelector('.aam-junction[data-id="j"]'))[1];
+    const businessTop = Number([...el.querySelectorAll<SVGElement>(".aam-layer-label")].find((l) => l.textContent === "Business Layer")?.getAttribute("y"));
+    const applicationTop = Number([...el.querySelectorAll<SVGElement>(".aam-layer-label")].find((l) => l.textContent === "Application Layer")?.getAttribute("y"));
+    const y = translateOf(q<HTMLElement>(el, '.aam-junction[data-id="j"]'))[1];
     assert.ok(y > businessTop && y < applicationTop, "the junction is in the Business band");
   } finally {
     close();
