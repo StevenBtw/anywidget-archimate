@@ -1519,6 +1519,7 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
       URL.revokeObjectURL(url);
       canvas.toBlob((b) => { if (b) downloadBlob(b, "archimate-diagram.png"); }, "image/png");
     };
+    img.onerror = () => URL.revokeObjectURL(url);
     img.src = url;
   });
 

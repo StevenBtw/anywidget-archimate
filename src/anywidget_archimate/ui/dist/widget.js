@@ -1563,6 +1563,7 @@ function render({ model, el }) {
         if (b) downloadBlob(b, "archimate-diagram.png");
       }, "image/png");
     };
+    img.onerror = () => URL.revokeObjectURL(url);
     img.src = url;
   });
   const listeners = [
