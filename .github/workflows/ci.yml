@@ -34,7 +34,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: tests/js/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            tests/js/package-lock.json
 
       - name: Install JavaScript test dependencies
         run: npm ci --ignore-scripts --prefix tests/js

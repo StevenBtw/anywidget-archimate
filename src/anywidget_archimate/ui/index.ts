@@ -1509,7 +1509,10 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
       const canvas = document.createElement("canvas");
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        return;
+      }
       ctx.fillStyle = model.get("dark_mode") ? "#1e1e3a" : "#fdfdfd";
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);

@@ -7,7 +7,10 @@
     "build": "node scripts/build-esm.mjs",
     "check": "node scripts/build-esm.mjs --check",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/js/*.test.ts"
+    "test": "uv run pytest tests/test_ui.py -k test_javascript"
+  },
+  "engines": {
+    "node": ">=22.18"
   },
   "devDependencies": {
     "@types/jsdom": "30.0.0",

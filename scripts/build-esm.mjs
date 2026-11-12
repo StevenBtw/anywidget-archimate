@@ -37,8 +37,9 @@ if (process.argv.includes("--check")) {
   let committed = "";
   try {
     committed = readFileSync(out, "utf8").replaceAll("\r\n", "\n");
-  } catch {
-    // missing: stale
+  } catch (err) {
+    // missing: stale; any other read error is not
+    if (err.code !== "ENOENT") throw err;
   }
   if (committed !== text) {
     console.error("src/anywidget_archimate/ui/dist/widget.js is stale: run `npm run build` in the package root");
