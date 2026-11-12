@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.2] - 2026-11-12
+
+Maintenance release: the front end is TypeScript, bundled by esbuild, with no change to what the widget draws or how it is used. Upgrading needs no action.
+
+### Changed
+
+- **Front end in TypeScript**: The widget loads `ui/dist/widget.js`, built by esbuild from the modules in `ui/*.ts` (`npm run build`), instead of the JavaScript modules joined as text. dagre is still inlined, so the widget makes no network requests.
+- **Release checks**: CI type-checks the front end with `tsc` (`npm run typecheck`) and fails when the committed bundle is stale (`npm run check`).
+
+### Dependencies
+
+- **Locked versions refreshed**: ruff 0.17.4, websockets 17.4, ipython 9.18.1, pyzmq 27.3.0 and anyio 4.16.0, among others. Front-end build tools: esbuild 0.28.2 and TypeScript 7.0.2.
+
 ## [0.5.1] - (2026-10-28)
 
 ### Improvements
