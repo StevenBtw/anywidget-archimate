@@ -80,3 +80,20 @@ test("highlight ids become a set of strings", () => {
   assert.equal(highlightIds(null).size, 0);
   assert.equal(highlightIds("n1").size, 0);
 });
+
+test("status fills keep element labels readable in both themes (4.5:1 or more)", async () => {
+  const { diagramCss } = await import("../../src/anywidget_archimate/ui/status.ts");
+  const lum = (hex: string) => {
+    const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const contrast = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+  for (const [dark, bg, text] of [[false, "#ffffff", "#151a18"], [true, "#161a19", "#e6ebe8"]] as const) {
+    const css = diagramCss(dark, bg);
+    for (const status of ["changed", "only-a", "only-b"]) {
+      const fill = new RegExp(`\.aam-status-${status} \.aam-node-rect \{ fill: (#[0-9a-f]{6})`, "i").exec(css)?.[1];
+      assert.ok(fill, `${status} has a fill (${dark ? "dark" : "light"})`);
+      assert.ok(contrast(text, fill!) >= 4.5, `${status} ${dark ? "dark" : "light"}: ${contrast(text, fill!).toFixed(2)}:1`);
+    }
+  }
+});

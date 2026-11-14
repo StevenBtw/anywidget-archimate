@@ -10,6 +10,32 @@ export const STATUS_ACCENTS = new Map([
   ["only_b", "#2e9b4f"],
 ]);
 
+// The light fills of the statuses that recolor an element (dark text reads on them)
+const STATUS_FILLS_LIGHT: [string, string][] = [["changed", "#ffd98a"], ["only_a", "#ffb8b2"], ["only_b", "#bdf0c8"]];
+
+function hex(v: number): string {
+  return Math.round(v).toString(16).padStart(2, "0");
+}
+
+/** `color` at `alpha` over `background` (#rrggbb both), opaque. */
+function over(color: string, background: string, alpha: number): string {
+  const ch = (c: string) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+  const [c, b] = [ch(color), ch(background)];
+  return "#" + c.map((v, i) => hex(alpha * v + (1 - alpha) * b[i])).join("");
+}
+
+/**
+ * The comparison styling for a theme: in light the pastel fills, in dark each status's accent at 40% over the
+ * canvas (as the elements' own fill), so element labels in the theme's text colour stay readable.
+ */
+export function diagramCss(dark: boolean, background: string): string {
+  if (!dark) return DIAGRAM_CSS;
+  const canvas = /^#[0-9a-f]{6}$/i.test(background) ? background : "#161a19";
+  const fills = STATUS_FILLS_LIGHT.map(([status]) => `.aam-node.${statusClass(status)} .aam-node-rect { fill: ${over(STATUS_ACCENTS.get(status)!, canvas, 0.4)}; }`);
+  const lines = DIAGRAM_CSS.split("\n").filter((line) => !/aam-node-rect \{ fill:/.test(line));
+  return [...lines, ...fills, ""].join("\n");
+}
+
 // Comparison styling and the badge font. The diagram SVG carries these in its own <style>, so the SVG and
 // PNG exports keep them. Edge rules never set a dash: the dash belongs to the relationship type.
 export const DIAGRAM_CSS = `

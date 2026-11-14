@@ -8,6 +8,22 @@ var STATUS_ACCENTS = /* @__PURE__ */ new Map([
   ["only_a", "#d1453b"],
   ["only_b", "#2e9b4f"]
 ]);
+var STATUS_FILLS_LIGHT = [["changed", "#ffd98a"], ["only_a", "#ffb8b2"], ["only_b", "#bdf0c8"]];
+function hex(v) {
+  return Math.round(v).toString(16).padStart(2, "0");
+}
+function over(color, background, alpha) {
+  const ch = (c2) => [1, 3, 5].map((i) => parseInt(c2.slice(i, i + 2), 16));
+  const [c, b] = [ch(color), ch(background)];
+  return "#" + c.map((v, i) => hex(alpha * v + (1 - alpha) * b[i])).join("");
+}
+function diagramCss(dark, background) {
+  if (!dark) return DIAGRAM_CSS;
+  const canvas = /^#[0-9a-f]{6}$/i.test(background) ? background : "#161a19";
+  const fills = STATUS_FILLS_LIGHT.map(([status]) => `.aam-node.${statusClass(status)} .aam-node-rect { fill: ${over(STATUS_ACCENTS.get(status), canvas, 0.4)}; }`);
+  const lines = DIAGRAM_CSS.split("\n").filter((line) => !/aam-node-rect \{ fill:/.test(line));
+  return [...lines, ...fills, ""].join("\n");
+}
 var DIAGRAM_CSS = `
 .aam-node-badge { font: 600 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; opacity: 0.85; }
 .aam-node.aam-status-partial { opacity: 0.75; }
@@ -50,7 +66,592 @@ function highlightIds(ids) {
   return new Set(Array.isArray(ids) ? ids.map(String) : []);
 }
 
+// layout.ts
+var SHARED_SHARE = 0.5;
+var NESTING_ORDER = ["Composition", "Aggregation", "Assignment", "Realization"];
+var SPACING = {
+  margin: 40,
+  // around the diagram
+  gap: 36,
+  // between elements in a row (also the vertical lanes between them)
+  bandLabel: 22,
+  // the band's label above its elements
+  bandPad: 14,
+  // below the elements, inside the band
+  channel: 30,
+  // the least gap between two bands (lines run here)
+  lane: 6,
+  // between parallel lines in a gap
+  layerGap: 18,
+  // extra between layers
+  containerPad: 12,
+  containerHead: 28,
+  childGap: 12
+};
+var ROLE_ORDER = ["actors", "external", "internal"];
+function roleOf(type, layer) {
+  if (!(layer in ROLE_LABELS)) return "internal";
+  if (layer === "Business" && /^(BusinessActor|BusinessRole|BusinessCollaboration)$/.test(type)) return "actors";
+  if (/(Service|Interface|Event)$/.test(type)) return "external";
+  return "internal";
+}
+var ROLE_LABELS = {
+  Business: { actors: "Actors and roles", external: "Business services", internal: "Business processes and objects" },
+  Application: { external: "Application services and interfaces", internal: "Applications and data" },
+  Technology: { external: "Technology services", internal: "Infrastructure" }
+};
+function bandLabel(layer, role) {
+  return ROLE_LABELS[layer]?.[role] ?? (role === "external" ? `${layer} services` : layer);
+}
+function nestingTree(elements, relationships) {
+  const byId = new Map(elements.map((e) => [e.id, e]));
+  const parent = /* @__PURE__ */ new Map();
+  const nested = /* @__PURE__ */ new Set();
+  const isAncestor = (a, of) => {
+    for (let p = parent.get(of); p !== void 0; p = parent.get(p)) if (p === a) return true;
+    return false;
+  };
+  for (const type of NESTING_ORDER) {
+    for (const r of relationships) {
+      if (r.type !== type) continue;
+      const s = byId.get(r.source), t = byId.get(r.target);
+      if (!s || !t || s.id === t.id || s.layer !== t.layer) continue;
+      if (/Junction$/.test(String(s.type)) || /Junction$/.test(String(t.type))) continue;
+      if (parent.has(t.id)) {
+        if (parent.get(t.id) === s.id) nested.add(r.id);
+        continue;
+      }
+      if (t.id === s.id || isAncestor(t.id, s.id)) continue;
+      parent.set(t.id, s.id);
+      nested.add(r.id);
+    }
+  }
+  return { parent, nested };
+}
+function layeredLayout(elements, relationships, opts) {
+  const S = SPACING;
+  const byId = new Map(elements.map((e) => [e.id, e]));
+  const modelOrder = new Map(elements.map((e, i) => [e.id, i]));
+  const { parent, nested } = opts.nest ? nestingTree(elements, relationships) : { parent: /* @__PURE__ */ new Map(), nested: /* @__PURE__ */ new Set() };
+  const collapsed = opts.collapsed ?? /* @__PURE__ */ new Set();
+  const children = /* @__PURE__ */ new Map();
+  for (const e of elements) {
+    const p = parent.get(e.id);
+    if (p !== void 0) (children.get(p) ?? children.set(p, []).get(p)).push(e.id);
+  }
+  const descendants = (id) => (children.get(id) ?? []).reduce((n, c) => n + 1 + descendants(c), 0);
+  const visibleOf = (id) => {
+    let shown = id;
+    for (let p = parent.get(id); p !== void 0; p = parent.get(p)) if (collapsed.has(p)) shown = p;
+    return shown;
+  };
+  const topOf = (id) => {
+    let top = id;
+    for (let p = parent.get(id); p !== void 0; p = parent.get(p)) top = p;
+    return top;
+  };
+  const rel = /* @__PURE__ */ new Map();
+  const size = /* @__PURE__ */ new Map();
+  function measure(id) {
+    const el = byId.get(id);
+    const kids = collapsed.has(id) ? [] : children.get(id) ?? [];
+    if (!kids.length) {
+      const s2 = opts.sizeOf(el);
+      size.set(id, s2);
+      return s2;
+    }
+    const sorted = [...kids].sort((a, b) => ROLE_ORDER.indexOf(roleOf(String(byId.get(a).type ?? ""), String(byId.get(a).layer))) - ROLE_ORDER.indexOf(roleOf(String(byId.get(b).type ?? ""), String(byId.get(b).layer))) || modelOrder.get(a) - modelOrder.get(b));
+    const sizes = sorted.map((c) => measure(c));
+    const cols = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(sorted.length))));
+    const rows2 = [];
+    let lastRole = null;
+    sorted.forEach((c, i) => {
+      const role = roleOf(String(byId.get(c).type ?? ""), String(byId.get(c).layer));
+      if (!rows2.length || role !== lastRole || rows2[rows2.length - 1].length >= cols) rows2.push([]);
+      rows2[rows2.length - 1].push(i);
+      lastRole = role;
+    });
+    let y2 = S.containerHead, width2 = 0;
+    for (const row of rows2) {
+      let x = S.containerPad, h = 0;
+      for (const i of row) {
+        rel.set(sorted[i], { x, y: y2 });
+        x += sizes[i].width + S.childGap;
+        h = Math.max(h, sizes[i].height);
+      }
+      width2 = Math.max(width2, x - S.childGap + S.containerPad);
+      y2 += h + S.childGap;
+    }
+    const s = { width: Math.max(width2, opts.sizeOf(el).width), height: y2 - S.childGap + S.containerPad };
+    for (const row of rows2) {
+      const last = sorted[row[row.length - 1]];
+      const used = rel.get(last).x + size.get(last).width + S.containerPad;
+      const shift = (s.width - used) / 2;
+      if (shift > 0) for (const i of row) rel.get(sorted[i]).x += shift;
+    }
+    size.set(id, s);
+    return s;
+  }
+  const units = /* @__PURE__ */ new Map();
+  for (const e of elements) {
+    if (parent.has(e.id)) continue;
+    const s = measure(e.id);
+    const layer = String(e.layer ?? "Other");
+    units.set(e.id, { id: e.id, ...s, role: roleOf(String(e.type ?? ""), layer), layer, x: 0, order: modelOrder.get(e.id) });
+  }
+  const links = /* @__PURE__ */ new Map();
+  for (const r of relationships) {
+    if (nested.has(r.id) || !byId.has(r.source) || !byId.has(r.target)) continue;
+    const a = topOf(r.source), b = topOf(r.target);
+    if (a === b) continue;
+    (links.get(a) ?? links.set(a, /* @__PURE__ */ new Set()).get(a)).add(b);
+    (links.get(b) ?? links.set(b, /* @__PURE__ */ new Set()).get(b)).add(a);
+  }
+  const layers = opts.layerOrder.filter((l) => [...units.values()].some((u) => u.layer === l));
+  const roleRows = [];
+  for (const layer of layers) {
+    for (const role of ROLE_ORDER) {
+      const list = [...units.values()].filter((u) => u.layer === layer && u.role === role).sort((a, b) => a.order - b.order);
+      if (list.length) roleRows.push({ layer, role, label: bandLabel(layer, role), units: list, top: 0, height: 0, first: true });
+    }
+  }
+  const posOf = /* @__PURE__ */ new Map();
+  const index = () => roleRows.forEach((row) => row.units.forEach((u, i) => posOf.set(u.id, (i + 0.5) / row.units.length)));
+  index();
+  for (let sweep = 0; sweep < 8; sweep++) {
+    const rows2 = sweep % 2 === 0 ? roleRows : [...roleRows].reverse();
+    for (const row of rows2) {
+      const bary = new Map(row.units.map((u) => {
+        const ns = [...links.get(u.id) ?? []].filter((n) => posOf.has(n) && !row.units.some((v) => v.id === n));
+        return [u.id, ns.length ? ns.reduce((s, n) => s + posOf.get(n), 0) / ns.length : posOf.get(u.id)];
+      }));
+      row.units.sort((a, b) => bary.get(a.id) - bary.get(b.id) || a.order - b.order);
+      row.units.forEach((u, i) => posOf.set(u.id, (i + 0.5) / row.units.length));
+    }
+  }
+  const widest = Math.max(...[...units.values()].map((u) => u.width), 0);
+  const heightAt = (W) => roleRows.reduce((h, row) => {
+    let rowH = 0, w = 0, tallest = 0;
+    for (const u of row.units) {
+      if (w && w + u.width > W) {
+        rowH += S.bandLabel + tallest + S.bandPad + S.channel;
+        w = 0;
+        tallest = 0;
+      }
+      w += u.width + S.gap;
+      tallest = Math.max(tallest, u.height);
+    }
+    return h + rowH + S.bandLabel + tallest + S.bandPad + S.channel;
+  }, 0);
+  const longest = Math.max(...roleRows.map((r) => r.units.reduce((s, u) => s + u.width + S.gap, 0)), widest);
+  let target = longest, bestScore = Infinity;
+  for (let W = widest; W <= longest + 1; W += Math.max(40, (longest - widest) / 60)) {
+    const score = Math.abs(Math.log(W / heightAt(W) / 1.6));
+    if (score < bestScore) {
+      bestScore = score;
+      target = W;
+    }
+  }
+  const rows = [];
+  for (const row of roleRows) {
+    let chunk = [], w = 0, first = true;
+    for (const u of row.units) {
+      if (chunk.length && w + u.width > target) {
+        rows.push({ ...row, units: chunk, first });
+        chunk = [];
+        w = 0;
+        first = false;
+      }
+      chunk.push(u);
+      w += u.width + S.gap;
+    }
+    if (chunk.length) rows.push({ ...row, units: chunk, first });
+  }
+  const rowOf = /* @__PURE__ */ new Map();
+  rows.forEach((row, i) => row.units.forEach((u) => rowOf.set(u.id, i)));
+  for (const row of rows) {
+    let x = 0;
+    for (const u of row.units) {
+      u.x = x + u.width / 2;
+      x += u.width + S.gap;
+    }
+  }
+  const unitList = [...units.values()];
+  const frame = Math.max(...rows.map((r) => r.units.reduce((s, u) => s + u.width + S.gap, -S.gap)), 0);
+  for (const row of rows) {
+    const used = row.units.reduce((s, u) => s + u.width + S.gap, -S.gap);
+    const shift = (frame - used) / 2 - (row.units[0].x - row.units[0].width / 2);
+    for (const u of row.units) u.x += shift;
+  }
+  for (let it = 0; it < 10; it++) {
+    for (const row of it % 2 === 0 ? rows : [...rows].reverse()) {
+      const want = row.units.map((u) => {
+        const ns = [...links.get(u.id) ?? []].filter((n) => units.has(n) && rowOf.get(n) !== rowOf.get(u.id));
+        return ns.length ? ns.reduce((s, n) => s + units.get(n).x, 0) / ns.length : u.x;
+      });
+      const fwd = [], bwd = [];
+      row.units.forEach((u, i) => {
+        const min = i ? fwd[i - 1] + row.units[i - 1].width / 2 + S.gap + u.width / 2 : u.width / 2;
+        fwd.push(Math.max(want[i], min));
+      });
+      for (let i = row.units.length - 1; i >= 0; i--) {
+        const u = row.units[i];
+        const max = i < row.units.length - 1 ? bwd[0] - row.units[i + 1].width / 2 - S.gap - u.width / 2 : frame - u.width / 2;
+        bwd.unshift(Math.min(want[i], max));
+      }
+      row.units.forEach((u, i) => {
+        u.x = (fwd[i] + bwd[i]) / 2;
+      });
+      for (let i = 0; i < row.units.length; i++) {
+        const a = row.units[i - 1], b = row.units[i];
+        b.x = Math.max(b.x, a ? a.x + a.width / 2 + S.gap + b.width / 2 : b.width / 2);
+      }
+      for (let i = row.units.length - 1; i >= 0; i--) {
+        const u = row.units[i], next = row.units[i + 1];
+        const max = next ? next.x - next.width / 2 - S.gap - u.width / 2 : frame - u.width / 2;
+        u.x = Math.min(u.x, max);
+      }
+    }
+  }
+  const minLeft = Math.min(...unitList.map((u) => u.x - u.width / 2));
+  for (const u of unitList) u.x += S.margin - minLeft;
+  const width = Math.max(...unitList.map((u) => u.x + u.width / 2), 0) + S.margin;
+  let links2 = [];
+  const linkKey = (s, t2, type) => `${s}>${t2}:${type}`;
+  const byKey = /* @__PURE__ */ new Map();
+  const addLink = (l) => {
+    const k = linkKey(l.s, l.t, l.type);
+    const known = byKey.get(k);
+    if (known) {
+      known.members.push(...l.members);
+      known.lifted = true;
+      return;
+    }
+    byKey.set(k, l);
+    links2.push(l);
+  };
+  for (const r of relationships) {
+    if (nested.has(r.id) || !byId.has(r.source) || !byId.has(r.target)) continue;
+    const s = visibleOf(r.source), t2 = visibleOf(r.target);
+    if (s === t2) continue;
+    addLink({ s, t: t2, type: String(r.type ?? ""), members: [r], lifted: s !== r.source || t2 !== r.target });
+  }
+  if (opts.bundle ?? true) {
+    const depthOf = (id) => {
+      let d = 0;
+      for (let q = parent.get(id); q !== void 0; q = parent.get(q)) d++;
+      return d;
+    };
+    const shown = (id) => visibleOf(id) === id;
+    const containersInside = [...children.keys()].filter((c) => shown(c) && !collapsed.has(c)).sort((a, b) => depthOf(b) - depthOf(a));
+    for (const c of containersInside) {
+      const kids = children.get(c) ?? [];
+      if (kids.length < 2) continue;
+      const kidOf = (id) => {
+        for (let q = id; q !== void 0; q = parent.get(q)) if (parent.get(q) === c) return q;
+        return null;
+      };
+      const groups2 = /* @__PURE__ */ new Map();
+      for (const l of links2) {
+        const sk = l.s === c ? null : kidOf(l.s), tk = l.t === c ? null : kidOf(l.t);
+        if (sk === null === (tk === null)) continue;
+        const dir = sk !== null ? "out" : "in";
+        const other = dir === "out" ? l.t : l.s;
+        if (other === c) continue;
+        const k = `${dir}|${other}|${l.type}`;
+        const g = groups2.get(k) ?? groups2.set(k, { kids: /* @__PURE__ */ new Set(), links: [], dir, other, type: l.type }).get(k);
+        g.kids.add(sk ?? tk);
+        g.links.push(l);
+      }
+      for (const g of groups2.values()) {
+        if (g.kids.size / kids.length <= SHARED_SHARE) continue;
+        const drop = new Set(g.links);
+        links2 = links2.filter((l) => !drop.has(l));
+        for (const l of g.links) byKey.delete(linkKey(l.s, l.t, l.type));
+        addLink({
+          s: g.dir === "out" ? c : g.other,
+          t: g.dir === "out" ? g.other : c,
+          type: g.type,
+          members: g.links.flatMap((l) => l.members),
+          lifted: true
+        });
+      }
+    }
+  }
+  const plans = [];
+  for (const link of links2) {
+    const { s, t: t2 } = link;
+    const r = link.members[0];
+    const rs = rowOf.get(topOf(s)), rt = rowOf.get(topOf(t2));
+    const down = rt > rs, up = rt < rs;
+    const sSide = up ? "top" : "bottom", tSide = down ? "top" : "bottom";
+    const channels2 = [], crossed = [];
+    if (down) for (let c = rs; c < rt; c++) channels2.push(c);
+    else if (up) for (let c = rs - 1; c >= rt; c--) channels2.push(c);
+    else channels2.push(rs);
+    if (down) for (let q = rs + 1; q < rt; q++) crossed.push(q);
+    if (up) for (let q = rs - 1; q > rt; q--) crossed.push(q);
+    const keys = channels2.map((_, k) => k === 0 ? `s:${s}:${link.type}` : k === channels2.length - 1 ? `t:${t2}:${link.type}` : `l:${plans.length}:${k}`);
+    plans.push({ rel: r, s, t: t2, lifted: link.lifted, members: link.members, rs, rt, sSide, tSide, channels: channels2, crossed, keys });
+  }
+  const box = /* @__PURE__ */ new Map();
+  const nodes = /* @__PURE__ */ new Map();
+  function place(id, left, top, depth) {
+    const s = size.get(id);
+    const kids = collapsed.has(id) ? [] : children.get(id) ?? [];
+    nodes.set(id, {
+      x: left + s.width / 2,
+      y: top + s.height / 2,
+      width: s.width,
+      height: s.height,
+      layer: String(byId.get(id).layer ?? "Other"),
+      depth,
+      parent: parent.get(id) ?? null,
+      container: kids.length > 0,
+      collapsed: collapsed.has(id) && (children.get(id) ?? []).length > 0,
+      hidden: collapsed.has(id) ? descendants(id) : 0
+    });
+    box.set(id, { x: left, y: top, width: s.width, height: s.height });
+    for (const c of kids) place(c, left + rel.get(c).x, top + rel.get(c).y, depth + 1);
+  }
+  const placeAll = (tops) => rows.forEach((row, i) => {
+    for (const u of row.units) place(u.id, u.x - u.width / 2, tops[i], 0);
+  });
+  placeAll(rows.map(() => 0));
+  const centre = (id) => {
+    const b = box.get(id);
+    return b.x + b.width / 2;
+  };
+  const portGroup = (p, end) => end === "s" ? `${p.s}:${p.sSide}:${p.rel.type}:out` : `${p.t}:${p.tSide}:${p.rel.type}:in`;
+  const groups = /* @__PURE__ */ new Map();
+  for (const p of plans) {
+    for (const end of ["s", "t"]) {
+      const g = portGroup(p, end);
+      const id = end === "s" ? p.s : p.t, side = end === "s" ? p.sSide : p.tSide;
+      (groups.get(g) ?? groups.set(g, { id, side, plans: [], end }).get(g)).plans.push(p);
+    }
+  }
+  const portX = /* @__PURE__ */ new Map();
+  const bySide = /* @__PURE__ */ new Map();
+  for (const [g, info] of groups) {
+    const k = `${info.id}|${info.side}`;
+    (bySide.get(k) ?? bySide.set(k, []).get(k)).push(g);
+  }
+  for (const [k, list] of bySide) {
+    const b = box.get(k.slice(0, k.lastIndexOf("|")));
+    const towards = (g) => {
+      const info = groups.get(g);
+      return info.plans.reduce((s, p) => s + centre(info.end === "s" ? p.t : p.s), 0) / info.plans.length;
+    };
+    list.sort((a, b2) => towards(a) - towards(b2));
+    const step = Math.min(16, (b.width - 20) / Math.max(1, list.length));
+    list.forEach((g, i) => portX.set(g, b.x + b.width / 2 + (i - (list.length - 1) / 2) * step));
+  }
+  const padX = (id, towards) => {
+    const b = box.get(id);
+    const left = b.x + S.containerPad / 2, right = b.x + b.width - S.containerPad / 2;
+    return Math.abs(towards - left) <= Math.abs(towards - right) ? left : right;
+  };
+  const exitX = (id, port, towards) => topOf(id) === id ? port : padX(topOf(id), towards);
+  const gapsOf = rows.map((row) => {
+    const list = [{ x: row.units[0].x - row.units[0].width / 2 - S.margin / 2, half: S.margin / 2, used: 0 }];
+    for (let i = 1; i < row.units.length; i++) {
+      const a = row.units[i - 1], b = row.units[i];
+      const l = a.x + a.width / 2, r = b.x - b.width / 2;
+      list.push({ x: (l + r) / 2, half: (r - l) / 2, used: 0 });
+    }
+    const last = row.units[row.units.length - 1];
+    list.push({ x: last.x + last.width / 2 + S.margin / 2, half: S.margin / 2, used: 0 });
+    return list;
+  });
+  const capacity = (g) => Math.max(1, Math.floor((2 * g.half - 2 * S.lane) / S.lane) + 1);
+  const blocked = (row, x) => rows[row].units.some((u) => x > u.x - u.width / 2 - S.lane && x < u.x + u.width / 2 + S.lane);
+  function crossAt(row, from, towards) {
+    if (!blocked(row, from)) return from;
+    if (!blocked(row, towards)) return towards;
+    const ranked = [...gapsOf[row]].sort((a, b) => Math.abs(a.x - from) + 0.5 * Math.abs(a.x - towards) - (Math.abs(b.x - from) + 0.5 * Math.abs(b.x - towards)));
+    const g = ranked.find((c) => c.used < capacity(c)) ?? ranked[0];
+    const n = g.used++;
+    const offset = (n % 2 ? -1 : 1) * Math.ceil(n / 2) * S.lane;
+    return g.x + Math.max(-(g.half - S.lane), Math.min(g.half - S.lane, offset));
+  }
+  const xsOf = /* @__PURE__ */ new Map();
+  for (const p of plans) {
+    const sx = portX.get(portGroup(p, "s")), tx = portX.get(portGroup(p, "t"));
+    const ex = exitX(p.s, sx, tx), en = exitX(p.t, tx, ex);
+    const xs = [ex];
+    let cur = ex;
+    for (const row of p.crossed) xs.push(cur = crossAt(row, cur, en));
+    xs.push(en);
+    xsOf.set(p, xs);
+  }
+  const runsIn = /* @__PURE__ */ new Map();
+  for (const p of plans) {
+    const xs = xsOf.get(p);
+    p.channels.forEach((c, k) => {
+      const lo = Math.min(xs[k], xs[k + 1]), hi = Math.max(xs[k], xs[k + 1]);
+      const byKey2 = runsIn.get(c) ?? runsIn.set(c, /* @__PURE__ */ new Map()).get(c);
+      const known = byKey2.get(p.keys[k]);
+      byKey2.set(p.keys[k], known ? [Math.min(known[0], lo), Math.max(known[1], hi)] : [lo, hi]);
+    });
+  }
+  const laneOf = /* @__PURE__ */ new Map();
+  const laneCount = /* @__PURE__ */ new Map();
+  for (const [c, byKey2] of runsIn) {
+    const ends = [];
+    for (const [key, [lo, hi]] of [...byKey2].sort((a, b) => a[1][0] - b[1][0])) {
+      let lane = ends.findIndex((right) => right + 2 * S.lane < lo);
+      if (lane < 0) {
+        lane = ends.length;
+        ends.push(hi);
+      } else ends[lane] = hi;
+      laneOf.set(`${c}|${key}`, lane);
+    }
+    laneCount.set(c, ends.length);
+  }
+  const channelHeight = (i) => Math.max(S.channel, ((laneCount.get(i) ?? 0) + 1) * S.lane + 12);
+  const bands = [];
+  let y = S.margin;
+  rows.forEach((row, i) => {
+    if (i > 0 && rows[i - 1].layer !== row.layer) y += S.layerGap;
+    row.top = y;
+    const tallest = Math.max(...row.units.map((u) => u.height));
+    row.height = (row.first ? S.bandLabel : 8) + tallest + S.bandPad;
+    bands.push({ layer: row.layer, label: row.first ? row.label : "", y0: row.top, y1: row.top + row.height });
+    y += row.height + channelHeight(i);
+  });
+  const lastLanes = laneCount.get(rows.length - 1) ?? 0;
+  const height = y - (lastLanes ? 0 : channelHeight(rows.length - 1)) + S.margin;
+  placeAll(rows.map((row) => row.top + (row.first ? S.bandLabel : 8)));
+  const laneY = (c, key) => rows[c].top + rows[c].height + 10 + (laneOf.get(`${c}|${key}`) ?? 0) * S.lane;
+  const edgeY = (id, side) => {
+    const b = box.get(id);
+    return side === "bottom" ? b.y + b.height : b.y;
+  };
+  function escape(id, side, port, towards) {
+    const pts = [{ x: port, y: edgeY(id, side) }];
+    let cur = id, x = port;
+    for (let up = parent.get(cur); up !== void 0; up = parent.get(cur)) {
+      const cb = box.get(cur);
+      const gy = side === "bottom" ? cb.y + cb.height + S.childGap / 2 : cb.y - S.childGap / 2;
+      const px = padX(up, towards);
+      pts.push({ x, y: gy }, { x: px, y: gy });
+      x = px;
+      cur = up;
+    }
+    if (cur !== id) pts.push({ x, y: edgeY(cur, side) });
+    return pts;
+  }
+  const edges = plans.map((p) => {
+    const xs = xsOf.get(p);
+    const sx = portX.get(portGroup(p, "s")), tx = portX.get(portGroup(p, "t"));
+    const pts = escape(p.s, p.sSide, sx, xs[xs.length - 1]);
+    p.channels.forEach((c, k) => {
+      const ly = laneY(c, p.keys[k]);
+      pts.push({ x: xs[k], y: ly }, { x: xs[k + 1], y: ly });
+    });
+    pts.push(...escape(p.t, p.tSide, tx, xs[0]).reverse());
+    return { points: simplify(pts), relationship: p.rel, source: p.s, target: p.t, members: p.members, lifted: p.lifted };
+  });
+  return { nodes, edges, bands, width, height, nested };
+}
+function simplify(pts) {
+  const out = [];
+  for (const p of pts) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(last.x - p.x) < 0.01 && Math.abs(last.y - p.y) < 0.01) continue;
+    out.push(p);
+    while (out.length >= 3) {
+      const [a, b, c] = out.slice(-3);
+      const straight = Math.abs(a.x - b.x) < 0.01 && Math.abs(b.x - c.x) < 0.01 || Math.abs(a.y - b.y) < 0.01 && Math.abs(b.y - c.y) < 0.01;
+      if (!straight) break;
+      out.splice(out.length - 2, 1);
+    }
+  }
+  return out;
+}
+var READABLE_SCALE = 0.9;
+function openView(width, height, boxWidth, boxHeight) {
+  if (!(boxWidth > 0 && boxHeight > 0)) return { x: 0, y: 0, width, height };
+  const fit = Math.min(boxWidth / width, boxHeight / height);
+  if (fit >= READABLE_SCALE) return { x: 0, y: 0, width, height };
+  const w = boxWidth / READABLE_SCALE, h = boxHeight / READABLE_SCALE;
+  return { x: Math.max(0, (width - w) / 2), y: 0, width: w, height: h };
+}
+
+// colors.ts
+var INK_FILL = 0.38;
+function channels(hex2) {
+  const h = hex2.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6);
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+}
+function mixOver(color, background, alpha) {
+  const c = channels(color), b = channels(background);
+  return "#" + c.map((v, i) => Math.round(alpha * v + (1 - alpha) * b[i]).toString(16).padStart(2, "0")).join("");
+}
+function inkColors(hue, background) {
+  return { stroke: hue.toLowerCase(), fill: mixOver(hue, background, INK_FILL) };
+}
+
+// legend.ts
+function relationSample(style, color) {
+  const x1 = style.srcMarker ? 9 : 1;
+  const x2 = style.tgtMarker === "triangle-hollow" ? 19 : style.tgtMarker ? 21 : 27;
+  const dash = style.dash ? ` stroke-dasharray="${style.dash}"` : "";
+  const parts = [`<line x1="${x1}" y1="5" x2="${x2}" y2="5" stroke="${color}" stroke-width="1.3"${dash}/>`];
+  const src = {
+    "diamond-filled": `<polygon points="1,5 5,2 9,5 5,8" fill="${color}" stroke="${color}"/>`,
+    "diamond-hollow": `<polygon points="1,5 5,2 9,5 5,8" fill="none" stroke="${color}"/>`,
+    "circle-filled": `<circle cx="5" cy="5" r="2.2" fill="${color}"/>`
+  };
+  const tgt = {
+    "arrow-filled": `<polygon points="21,1.5 27,5 21,8.5" fill="${color}" stroke="${color}"/>`,
+    "arrow-hollow": `<polyline points="21,1.5 27,5 21,8.5" fill="none" stroke="${color}" stroke-width="1.3"/>`,
+    "triangle-hollow": `<polygon points="19,1 27,5 19,9" fill="none" stroke="${color}"/>`
+  };
+  if (src[style.srcMarker]) parts.push(src[style.srcMarker]);
+  if (tgt[style.tgtMarker]) parts.push(tgt[style.tgtMarker]);
+  return `<svg width="28" height="10" viewBox="0 0 28 10" aria-hidden="true">${parts.join("")}</svg>`;
+}
+
+// names.ts
+var LAYER_PREFIX = /^(Business|Application|Technology|Implementation)(?=[A-Z])/;
+function typeName(type) {
+  return String(type ?? "").replace(LAYER_PREFIX, "").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
+}
+
+// icons.ts
+var svg = (body) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+var ICONS = {
+  sidebar: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>'),
+  upload: svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/>'),
+  download: svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>'),
+  zoomFit: svg('<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>'),
+  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+  moon: svg('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
+  close: svg('<path d="M18 6L6 18M6 6l12 12"/>')
+};
+
+// size.ts
+var MIN_HEIGHT = 360;
+function wrapperSize(width, height) {
+  const w = width > 0 ? `${width}px` : "100%";
+  if (height > 0) return { width: w, height: `${height}px` };
+  return { width: w, aspectRatio: "16 / 10", minHeight: `${MIN_HEIGHT}px`, maxHeight: "80vh" };
+}
+
 // index.ts
+function diagramTheme(container, dark) {
+  const style = container.ownerDocument?.defaultView?.getComputedStyle(container);
+  const hex2 = (name, fallback) => {
+    const v = style?.getPropertyValue(name).trim() ?? "";
+    return /^#[0-9a-f]{6}$/i.test(v) ? v : fallback;
+  };
+  const bg = hex2("--aam-graph-bg", dark ? "#161a19" : "#ffffff");
+  const text = hex2("--aam-text", dark ? "#e6ebe8" : "#151a18");
+  return { dark, bg, text, edge: mixOver(text, bg, 0.5) };
+}
 var LAYER_COLORS = {
   Motivation: { fill: "#CCCCFF", stroke: "#8484E0", text: "#2E2E6B" },
   Strategy: { fill: "#F5DEAA", stroke: "#C99A3B", text: "#5C4211" },
@@ -162,7 +763,6 @@ var ELEMENT_TYPES = new Map(
 var NODE_WIDTH = 160;
 var NODE_HEIGHT = 50;
 var JUNCTION_SIZE = 12;
-var LAYER_LABEL_PAD = 30;
 function nodeRx(type) {
   return ELEMENT_TYPES.get(type)?.behavior ? 14 : 4;
 }
@@ -184,19 +784,6 @@ var REL_STYLES = {
   Association: { dash: "", srcMarker: "", tgtMarker: "" },
   Specialization: { dash: "", srcMarker: "", tgtMarker: "triangle-hollow" },
   Influence: { dash: "6 4", srcMarker: "", tgtMarker: "arrow-hollow" }
-};
-var REL_COLORS = {
-  Composition: "#7c3aed",
-  Aggregation: "#6366f1",
-  Assignment: "#2563eb",
-  Realization: "#0891b2",
-  Serving: "#059669",
-  Access: "#d97706",
-  Flow: "#dc2626",
-  Triggering: "#be185d",
-  Association: "#6b7280",
-  Specialization: "#4b5563",
-  Influence: "#9333ea"
 };
 var ICON_STROKE = { fill: "none", stroke: "currentColor", "stroke-width": 1.2 };
 var iconPath = (g, d, extra = {}) => g.appendChild(svgEl("path", { d, ...ICON_STROKE, ...extra }));
@@ -403,9 +990,9 @@ function qs(root, selector) {
   if (!found) throw new Error(`widget markup is missing ${selector}`);
   return found;
 }
-function buildMarkerDefs() {
+function buildMarkerDefs(theme) {
   const defs = svgEl("defs");
-  for (const [status, color] of [[null, "#666"], ...STATUS_ACCENTS]) {
+  for (const [status, color] of [[null, theme.edge], ...STATUS_ACCENTS]) {
     const arrowFilled = svgEl("marker", {
       id: markerId("arrow-filled", status),
       viewBox: "0 0 10 10",
@@ -428,7 +1015,7 @@ function buildMarkerDefs() {
     });
     arrowHollow.appendChild(svgEl("path", {
       d: "M 0 0 L 10 5 L 0 10 Z",
-      fill: "#fff",
+      fill: theme.bg,
       stroke: color,
       "stroke-width": "1.5"
     }));
@@ -444,7 +1031,7 @@ function buildMarkerDefs() {
     });
     triHollow.appendChild(svgEl("path", {
       d: "M 0 0 L 12 6 L 0 12 Z",
-      fill: "#fff",
+      fill: theme.bg,
       stroke: color,
       "stroke-width": "1.5"
     }));
@@ -471,7 +1058,7 @@ function buildMarkerDefs() {
     });
     diamondHollow.appendChild(svgEl("path", {
       d: "M 0 6 L 6 0 L 12 6 L 6 12 Z",
-      fill: "#fff",
+      fill: theme.bg,
       stroke: color,
       "stroke-width": "1.5"
     }));
@@ -497,8 +1084,9 @@ function buildFilterPanel(model, onFilterChange) {
   const hiddenElementTypes = /* @__PURE__ */ new Set();
   const hiddenRelTypes = /* @__PURE__ */ new Set();
   let nestElements = true;
+  let nestRelations = true;
   function emitChange() {
-    onFilterChange(hiddenLayers, hiddenElementTypes, hiddenRelTypes, nestElements);
+    onFilterChange(hiddenLayers, hiddenElementTypes, hiddenRelTypes, nestElements, nestRelations);
   }
   function renderPanel() {
     panel.innerHTML = "";
@@ -528,6 +1116,22 @@ function buildFilterPanel(model, onFilterChange) {
     nestLbl.textContent = "Nest elements";
     nestItem.appendChild(nestLbl);
     nestSection.appendChild(nestItem);
+    const relItem = document.createElement("label");
+    relItem.className = "aam-filter-item aam-filter-nest-toggle";
+    relItem.title = "A relationship most of a container's children share is drawn once, at the container";
+    const relCb = document.createElement("input");
+    relCb.type = "checkbox";
+    relCb.checked = nestRelations;
+    relCb.className = "aam-filter-checkbox";
+    relCb.addEventListener("change", () => {
+      nestRelations = relCb.checked;
+      emitChange();
+    });
+    const relLbl = document.createElement("span");
+    relLbl.className = "aam-filter-name";
+    relLbl.textContent = "Nest relationships";
+    relItem.append(relCb, relLbl);
+    nestSection.appendChild(relItem);
     content.appendChild(nestSection);
     const layerSection = document.createElement("div");
     layerSection.className = "aam-filter-section";
@@ -550,7 +1154,7 @@ function buildFilterPanel(model, onFilterChange) {
       layerSection.appendChild(createCheckboxItem({
         name: `${layer} Layer`,
         count,
-        color: colors.fill,
+        color: colors.stroke,
         borderColor: colors.stroke,
         isHidden: hiddenLayers.has(layer),
         onToggle: (v) => {
@@ -592,7 +1196,7 @@ function buildFilterPanel(model, onFilterChange) {
         elemSection.appendChild(createCheckboxItem({
           name: formatType(type) || "(no type)",
           count,
-          color: colors.fill,
+          color: colors.stroke,
           borderColor: colors.stroke,
           badge: getTypeBadge(type),
           isHidden: hiddenElementTypes.has(type),
@@ -625,9 +1229,8 @@ function buildFilterPanel(model, onFilterChange) {
       relSection.appendChild(createCheckboxItem({
         name: type,
         count,
-        color: REL_COLORS[type] || "#6b7280",
-        borderColor: REL_COLORS[type] || "#6b7280",
-        dash: st.dash,
+        color: "",
+        sample: relationSample(st, "currentColor"),
         isHidden: hiddenRelTypes.has(type),
         onToggle: (v) => {
           if (v) hiddenRelTypes.delete(type);
@@ -673,7 +1276,7 @@ function addToggleLinks(header, allKeys, hiddenSet, callback) {
   links.appendChild(n);
   header.appendChild(links);
 }
-function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHidden, onToggle }) {
+function createCheckboxItem({ name, count, color, borderColor, badge, sample, isHidden, onToggle }) {
   const item = document.createElement("div");
   item.className = "aam-filter-item" + (isHidden ? " aam-filter-hidden" : "");
   const cb = document.createElement("input");
@@ -686,10 +1289,14 @@ function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHi
   });
   item.appendChild(cb);
   const sw = document.createElement("span");
-  sw.className = "aam-filter-swatch";
-  sw.style.background = color;
-  sw.style.borderColor = borderColor || color;
-  if (dash) sw.style.borderStyle = "dashed";
+  if (sample) {
+    sw.className = "aam-filter-line";
+    sw.innerHTML = sample;
+  } else {
+    sw.className = "aam-filter-swatch";
+    sw.style.background = `color-mix(in srgb, ${color} 38%, var(--aam-panel-bg))`;
+    sw.style.borderColor = borderColor || color;
+  }
   item.appendChild(sw);
   if (badge) {
     const b = document.createElement("span");
@@ -707,479 +1314,120 @@ function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHi
   item.appendChild(ct);
   return item;
 }
-var NESTING_REL_TYPES = /* @__PURE__ */ new Set(["Composition", "Aggregation"]);
 var CONTAINER_PAD_TOP = 28;
-var CONTAINER_PAD = 14;
-var CHILD_COLS = 3;
-var CHILD_GAP = 10;
-var LAYER_GAP = 60;
-var LAYER_MARGIN = 50;
-function computeLayout(elements, relationships, nestElements) {
-  const elementIds = new Set(elements.map((e) => e.id));
-  const elemById = new Map(elements.map((e) => [e.id, e]));
-  const nestedEdgeIds = /* @__PURE__ */ new Set();
-  const childToParent = /* @__PURE__ */ new Map();
-  const parentToChildren = /* @__PURE__ */ new Map();
-  if (nestElements) {
-    for (const rel of relationships) {
-      if (!NESTING_REL_TYPES.has(rel.type ?? "")) continue;
-      if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
-      if (!childToParent.has(rel.target)) {
-        childToParent.set(rel.target, rel.source);
-        if (!parentToChildren.has(rel.source)) parentToChildren.set(rel.source, []);
-        parentToChildren.get(rel.source).push(rel.target);
-        nestedEdgeIds.add(rel.id);
-      }
-    }
-  }
-  const parentIds = new Set(parentToChildren.keys());
-  function containerSize(parentId) {
-    const ch = parentToChildren.get(parentId) ?? [];
-    const cols = Math.min(ch.length, CHILD_COLS);
-    const rows = Math.ceil(ch.length / CHILD_COLS);
-    return {
-      width: Math.max(cols * NODE_WIDTH + (cols - 1) * CHILD_GAP + CONTAINER_PAD * 2, NODE_WIDTH + CONTAINER_PAD * 2),
-      height: Math.max(rows * NODE_HEIGHT + (rows - 1) * CHILD_GAP + CONTAINER_PAD_TOP + CONTAINER_PAD, NODE_HEIGHT + CONTAINER_PAD_TOP + CONTAINER_PAD)
-    };
-  }
-  const layerElements = {};
-  for (const el of elements) {
-    if (childToParent.has(el.id)) continue;
-    const layer = el.layer ?? "Other";
-    if (!layerElements[layer]) layerElements[layer] = [];
-    layerElements[layer].push(el);
-  }
-  const nodePositions = /* @__PURE__ */ new Map();
-  let currentY = LAYER_MARGIN;
-  let maxWidth = 0;
-  const orderedLayers = LAYER_ORDER.filter((l) => layerElements[l] && layerElements[l].length > 0);
-  for (const layer of orderedLayers) {
-    const layerEls = layerElements[layer];
-    const layerIds = new Set(layerEls.map((e) => e.id));
-    const withinEdges = [];
-    for (const rel of relationships) {
-      if (nestedEdgeIds.has(rel.id)) continue;
-      let src = rel.source, tgt = rel.target;
-      if (childToParent.has(src)) src = childToParent.get(src);
-      if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
-      if (src === tgt) continue;
-      if (layerIds.has(src) && layerIds.has(tgt)) withinEdges.push({ src, tgt, rel });
-    }
-    const connectedIds = /* @__PURE__ */ new Set();
-    withinEdges.forEach(({ src, tgt }) => {
-      connectedIds.add(src);
-      connectedIds.add(tgt);
-    });
-    const connected = layerEls.filter((e) => connectedIds.has(e.id));
-    const disconnected = layerEls.filter((e) => !connectedIds.has(e.id));
-    let layerW = 0, layerH = 0;
-    if (connected.length > 0) {
-      const g = new dagre.graphlib.Graph({ multigraph: true });
-      g.setGraph({ rankdir: "LR", ranksep: 60, nodesep: 30, edgesep: 20, marginx: 20, marginy: 20 });
-      g.setDefaultEdgeLabel(() => ({}));
-      for (const el of connected) {
-        const isP = parentIds.has(el.id);
-        const sz = isP ? containerSize(el.id) : nodeSize(el);
-        g.setNode(el.id, { label: el.name, width: sz.width, height: sz.height });
-      }
-      for (const { src, tgt, rel } of withinEdges) {
-        g.setEdge(src, tgt, { relationship: rel }, rel.id);
-      }
-      dagre.layout(g);
-      const gInfo = g.graph();
-      layerW = gInfo.width || 0;
-      layerH = gInfo.height || 0;
-      for (const nodeId of g.nodes()) {
-        const nd = g.node(nodeId);
-        nodePositions.set(nodeId, {
-          x: nd.x,
-          y: nd.y + currentY,
-          width: nd.width,
-          height: nd.height,
-          layer,
-          _isParent: parentIds.has(nodeId)
-        });
-      }
-    }
-    if (disconnected.length > 0) {
-      const gap = 20;
-      const startY = currentY + layerH + (layerH > 0 ? 30 : 0);
-      let rowX = 20;
-      let rowH = 0;
-      for (const el of disconnected) {
-        const isP = parentIds.has(el.id);
-        const sz = isP ? containerSize(el.id) : nodeSize(el);
-        nodePositions.set(el.id, {
-          x: rowX + sz.width / 2,
-          y: startY + sz.height / 2,
-          width: sz.width,
-          height: sz.height,
-          layer,
-          _isParent: isP
-        });
-        rowX += sz.width + gap;
-        rowH = Math.max(rowH, sz.height);
-      }
-      layerW = Math.max(layerW, rowX);
-      layerH += (layerH > 0 ? 30 : 0) + rowH;
-    }
-    maxWidth = Math.max(maxWidth, layerW);
-    currentY += layerH + LAYER_GAP;
-  }
-  for (const layer of orderedLayers) {
-    const layerEls = layerElements[layer];
-    let minX = Infinity, maxX = -Infinity;
-    for (const el of layerEls) {
-      const pos = nodePositions.get(el.id);
-      if (pos) {
-        minX = Math.min(minX, pos.x - pos.width / 2);
-        maxX = Math.max(maxX, pos.x + pos.width / 2);
-      }
-    }
-    const lw = maxX - minX;
-    const ox = (maxWidth - lw) / 2 - minX + LAYER_MARGIN;
-    for (const el of layerEls) {
-      const pos = nodePositions.get(el.id);
-      if (pos) pos.x += ox;
-    }
-  }
-  const crossEdges = [];
-  for (const rel of relationships) {
-    if (nestedEdgeIds.has(rel.id)) continue;
-    if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
-    let src = rel.source, tgt = rel.target;
-    if (childToParent.has(src)) src = childToParent.get(src);
-    if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
-    if (src === tgt) continue;
-    const se = elemById.get(src), te = elemById.get(tgt);
-    if (!se || !te || se.layer === te.layer) continue;
-    crossEdges.push({ src, tgt });
-  }
-  const crossNeighbors = /* @__PURE__ */ new Map();
-  for (const { src, tgt } of crossEdges) {
-    if (!crossNeighbors.has(src)) crossNeighbors.set(src, []);
-    if (!crossNeighbors.has(tgt)) crossNeighbors.set(tgt, []);
-    crossNeighbors.get(src).push(tgt);
-    crossNeighbors.get(tgt).push(src);
-  }
-  function findComponents(layerEls, withinLayerEdges) {
-    const parent = /* @__PURE__ */ new Map();
-    layerEls.forEach((e) => parent.set(e.id, e.id));
-    function find(x) {
-      while (parent.get(x) !== x) {
-        const p = parent.get(x);
-        parent.set(x, parent.get(p));
-        x = p;
-      }
-      return x;
-    }
-    function union(a, b) {
-      const ra = find(a), rb = find(b);
-      if (ra !== rb) parent.set(ra, rb);
-    }
-    withinLayerEdges.forEach(({ src, tgt }) => {
-      if (parent.has(src) && parent.has(tgt)) union(src, tgt);
-    });
-    const groups = /* @__PURE__ */ new Map();
-    layerEls.forEach((e) => {
-      const root = find(e.id);
-      if (!groups.has(root)) groups.set(root, []);
-      groups.get(root).push(e.id);
-    });
-    return [...groups.values()];
-  }
-  function groupBarycenter(nodeIds) {
-    let sumX = 0, count = 0;
-    for (const id of nodeIds) {
-      const neighbors = crossNeighbors.get(id) || [];
-      for (const nid of neighbors) {
-        const np = nodePositions.get(nid);
-        if (np) {
-          sumX += np.x;
-          count++;
-        }
-      }
-    }
-    return count > 0 ? sumX / count : null;
-  }
-  for (let pass = 0; pass < 3; pass++) {
-    const layerOrder = pass % 2 === 0 ? orderedLayers : [...orderedLayers].reverse();
-    for (const layer of layerOrder) {
-      const layerEls = layerElements[layer];
-      if (!layerEls || layerEls.length === 0) continue;
-      const layerIds = new Set(layerEls.map((e) => e.id));
-      const withinEdges = [];
-      for (const rel of relationships) {
-        if (nestedEdgeIds.has(rel.id)) continue;
-        let src = rel.source, tgt = rel.target;
-        if (childToParent.has(src)) src = childToParent.get(src);
-        if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
-        if (src === tgt) continue;
-        if (layerIds.has(src) && layerIds.has(tgt)) withinEdges.push({ src, tgt });
-      }
-      const components = findComponents(layerEls, withinEdges);
-      const compInfos = components.map((ids) => {
-        const bc = groupBarycenter(ids);
-        let minX = Infinity, maxX = -Infinity;
-        for (const id of ids) {
-          const p = nodePositions.get(id);
-          if (p) {
-            minX = Math.min(minX, p.x - p.width / 2);
-            maxX = Math.max(maxX, p.x + p.width / 2);
-          }
-        }
-        const centerX = (minX + maxX) / 2;
-        const width = maxX - minX;
-        return { ids, bc, centerX, width };
-      });
-      compInfos.sort((a, b) => {
-        if (a.bc === null && b.bc === null) return 0;
-        if (a.bc === null) return 1;
-        if (b.bc === null) return -1;
-        return a.bc - b.bc;
-      });
-      const gap = 30;
-      let cursor = LAYER_MARGIN;
-      for (const ci of compInfos) {
-        let targetX;
-        if (ci.bc !== null) {
-          targetX = Math.max(cursor + ci.width / 2, ci.bc);
-        } else {
-          targetX = cursor + ci.width / 2;
-        }
-        const shiftX = targetX - ci.centerX;
-        for (const id of ci.ids) {
-          const p = nodePositions.get(id);
-          if (p) p.x += shiftX;
-        }
-        let compMaxX = -Infinity;
-        for (const id of ci.ids) {
-          const p = nodePositions.get(id);
-          if (p) compMaxX = Math.max(compMaxX, p.x + p.width / 2);
-        }
-        cursor = compMaxX + gap;
-      }
-      for (const el of layerEls) {
-        const p = nodePositions.get(el.id);
-        if (p) maxWidth = Math.max(maxWidth, p.x + p.width / 2 + LAYER_MARGIN);
-      }
-    }
-  }
-  for (const [pid, children] of parentToChildren) {
-    const pp = nodePositions.get(pid);
-    if (!pp) continue;
-    const px = pp.x - pp.width / 2 + CONTAINER_PAD;
-    const py = pp.y - pp.height / 2 + CONTAINER_PAD_TOP;
-    children.forEach((cid, i) => {
-      const col = i % CHILD_COLS, row = Math.floor(i / CHILD_COLS);
-      const ce = elemById.get(cid);
-      nodePositions.set(cid, {
-        x: px + col * (NODE_WIDTH + CHILD_GAP) + NODE_WIDTH / 2,
-        y: py + row * (NODE_HEIGHT + CHILD_GAP) + NODE_HEIGHT / 2,
-        width: NODE_WIDTH,
-        height: NODE_HEIGHT,
-        layer: ce?.layer ?? pp.layer,
-        _isChild: true
-      });
-    });
-  }
-  const edgeInfos = [];
-  const srcBottomPorts = /* @__PURE__ */ new Map();
-  const srcTopPorts = /* @__PURE__ */ new Map();
-  const srcRightPorts = /* @__PURE__ */ new Map();
-  const tgtTopPorts = /* @__PURE__ */ new Map();
-  const tgtBottomPorts = /* @__PURE__ */ new Map();
-  const tgtLeftPorts = /* @__PURE__ */ new Map();
-  for (const rel of relationships) {
-    if (nestedEdgeIds.has(rel.id)) continue;
-    if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
-    let src = rel.source, tgt = rel.target;
-    if (childToParent.has(src)) src = childToParent.get(src);
-    if (childToParent.has(tgt)) tgt = childToParent.get(tgt);
-    if (src === tgt) continue;
-    const sp = nodePositions.get(src), tp = nodePositions.get(tgt);
-    if (!sp || !tp) continue;
-    const se = elemById.get(src), te = elemById.get(tgt);
-    if (!se || !te) continue;
-    const sL = LAYER_RANK[se.layer ?? "Other"] ?? LAYER_RANK.Other, tL = LAYER_RANK[te.layer ?? "Other"] ?? LAYER_RANK.Other;
-    edgeInfos.push({ src, tgt, sp, tp, sL, tL, rel });
-    if (sL === tL) {
-      srcRightPorts.set(src, (srcRightPorts.get(src) || 0) + 1);
-      tgtLeftPorts.set(tgt, (tgtLeftPorts.get(tgt) || 0) + 1);
-    } else if (sL < tL) {
-      srcBottomPorts.set(src, (srcBottomPorts.get(src) || 0) + 1);
-      tgtTopPorts.set(tgt, (tgtTopPorts.get(tgt) || 0) + 1);
-    } else {
-      srcTopPorts.set(src, (srcTopPorts.get(src) || 0) + 1);
-      tgtBottomPorts.set(tgt, (tgtBottomPorts.get(tgt) || 0) + 1);
-    }
-  }
-  const srcBottomIdx = /* @__PURE__ */ new Map();
-  const srcTopIdx = /* @__PURE__ */ new Map();
-  const srcRightIdx = /* @__PURE__ */ new Map();
-  const tgtTopIdx = /* @__PURE__ */ new Map();
-  const tgtBottomIdx = /* @__PURE__ */ new Map();
-  const tgtLeftIdx = /* @__PURE__ */ new Map();
-  function getPortX(nodePos, portMap, idxMap, nodeId) {
-    const total = portMap.get(nodeId) || 1;
-    const idx = idxMap.get(nodeId) || 0;
-    idxMap.set(nodeId, idx + 1);
-    const span = nodePos.width * 0.7;
-    const start = nodePos.x - span / 2;
-    if (total === 1) return nodePos.x;
-    return start + idx / (total - 1) * span;
-  }
-  function getPortY(nodePos, portMap, idxMap, nodeId) {
-    const total = portMap.get(nodeId) || 1;
-    const idx = idxMap.get(nodeId) || 0;
-    idxMap.set(nodeId, idx + 1);
-    const span = nodePos.height * 0.6;
-    const start = nodePos.y - span / 2;
-    if (total === 1) return nodePos.y;
-    return start + idx / (total - 1) * span;
-  }
-  edgeInfos.sort((a, b) => {
-    if (a.sL === a.tL && b.sL === b.tL) return a.tp.x - b.tp.x;
-    if (a.sL !== a.tL && b.sL !== b.tL) return a.tp.x - b.tp.x;
-    return 0;
-  });
-  const edgeList = [];
-  const JOG_SPREAD = 8;
-  let jogCounter = 0;
-  for (const { src, tgt, sp, tp, sL, tL, rel } of edgeInfos) {
-    let points;
-    if (sL === tL) {
-      const sx = sp.x + sp.width / 2;
-      const tx = tp.x - tp.width / 2;
-      const sy = getPortY(sp, srcRightPorts, srcRightIdx, src);
-      const ty = getPortY(tp, tgtLeftPorts, tgtLeftIdx, tgt);
-      if (Math.abs(sy - ty) < 5) {
-        points = [{ x: sx, y: sy }, { x: tx, y: ty }];
-      } else {
-        const midX = (sx + tx) / 2 + (jogCounter++ % 5 - 2) * JOG_SPREAD;
-        points = [{ x: sx, y: sy }, { x: midX, y: sy }, { x: midX, y: ty }, { x: tx, y: ty }];
-      }
-    } else if (sL < tL) {
-      const srcX = getPortX(sp, srcBottomPorts, srcBottomIdx, src);
-      const tgtX = getPortX(tp, tgtTopPorts, tgtTopIdx, tgt);
-      const srcY = sp.y + sp.height / 2;
-      const tgtY = tp.y - tp.height / 2;
-      if (Math.abs(srcX - tgtX) < 5) {
-        points = [{ x: srcX, y: srcY }, { x: tgtX, y: tgtY }];
-      } else {
-        const baseMidY = (srcY + tgtY) / 2;
-        const jogOffset = (jogCounter++ % 7 - 3) * JOG_SPREAD;
-        const midY = baseMidY + jogOffset;
-        points = [
-          { x: srcX, y: srcY },
-          { x: srcX, y: midY },
-          { x: tgtX, y: midY },
-          { x: tgtX, y: tgtY }
-        ];
-      }
-    } else {
-      const srcX = getPortX(sp, srcTopPorts, srcTopIdx, src);
-      const tgtX = getPortX(tp, tgtBottomPorts, tgtBottomIdx, tgt);
-      const srcY = sp.y - sp.height / 2;
-      const tgtY = tp.y + tp.height / 2;
-      if (Math.abs(srcX - tgtX) < 5) {
-        points = [{ x: srcX, y: srcY }, { x: tgtX, y: tgtY }];
-      } else {
-        const baseMidY = (srcY + tgtY) / 2;
-        const jogOffset = (jogCounter++ % 7 - 3) * JOG_SPREAD;
-        const midY = baseMidY + jogOffset;
-        points = [
-          { x: srcX, y: srcY },
-          { x: srcX, y: midY },
-          { x: tgtX, y: midY },
-          { x: tgtX, y: tgtY }
-        ];
-      }
-    }
-    edgeList.push({ points, relationship: rel });
-  }
-  const totalW = maxWidth + LAYER_MARGIN * 2;
-  const totalH = currentY - LAYER_GAP + LAYER_MARGIN;
-  return { nodes: nodePositions, edges: edgeList, width: totalW, height: totalH };
-}
-function renderDiagram(container, elements, relationships, darkMode, nestElements) {
+function renderDiagram(container, elements, relationships, darkMode, nestElements, collapsed = /* @__PURE__ */ new Set(), nestRelations = true) {
   container.innerHTML = "";
   if (!elements.length) {
-    container.innerHTML = '<div class="aam-empty">No ArchiMate elements to display. Use <code>.load_xml(path)</code> or <code>ArchiMate.from_xml(path)</code>.</div>';
+    container.innerHTML = '<div class="aam-empty">Nothing to show yet. Open a model file, or use <code>.load_xml(path)</code> or <code>ArchiMate.from_xml(path)</code> in Python.</div>';
     return null;
   }
-  const layout = computeLayout(elements, relationships, nestElements);
-  const svg = svgEl("svg", {
+  const layout = layeredLayout(elements, relationships, {
+    nest: nestElements,
+    collapsed,
+    bundle: nestRelations,
+    layerOrder: LAYER_ORDER,
+    sizeOf: (el) => isJunction(el.type ?? "") ? { width: JUNCTION_SIZE, height: JUNCTION_SIZE } : nodeSize(el)
+  });
+  const svg2 = svgEl("svg", {
     width: "100%",
     height: "100%",
+    // Lines quiet until their element is hovered or selected (styles.css .aam-lines-quiet)
     viewBox: `0 0 ${layout.width} ${layout.height}`,
-    class: "aam-svg"
+    class: "aam-svg aam-lines-quiet"
   });
   const style = svgEl("style");
-  style.textContent = DIAGRAM_CSS;
-  svg.appendChild(style);
-  svg.appendChild(buildMarkerDefs());
+  style.textContent = diagramCss(darkMode, diagramTheme(container, darkMode).bg);
+  svg2.appendChild(style);
+  svg2.appendChild(buildMarkerDefs(diagramTheme(container, darkMode)));
   const mainG = svgEl("g", { class: "aam-main" });
-  svg.appendChild(mainG);
-  drawLayerBands(mainG, layout, layout.width, darkMode);
+  svg2.appendChild(mainG);
+  const theme = diagramTheme(container, darkMode);
+  drawLayerBands(mainG, layout, theme);
+  const byId = new Map(elements.map((e) => [e.id, e]));
   const containersG = svgEl("g", { class: "aam-containers" });
   mainG.appendChild(containersG);
-  for (const [id, nd] of layout.nodes) {
-    const el = elements.find((e) => e.id === id);
-    if (el && nd._isParent) drawContainerNode(containersG, nd, el, darkMode);
+  const containers = [...layout.nodes].filter(([, nd]) => nd.container).sort((a, b) => a[1].depth - b[1].depth);
+  for (const [id, nd] of containers) {
+    const el = byId.get(id);
+    if (el) drawContainerNode(containersG, nd, el, theme);
   }
   const edgesG = svgEl("g", { class: "aam-edges" });
   mainG.appendChild(edgesG);
-  for (const edge of layout.edges) drawEdge(edgesG, edge, darkMode);
+  const nameOf = (id) => String(elements.find((e) => e.id === id)?.name || id);
+  const chainOf = (id) => {
+    const ids = [];
+    for (let q = id; q; q = layout.nodes.get(q)?.parent) ids.push(q);
+    return ids;
+  };
+  for (const edge of layout.edges) drawEdge(edgesG, edge, theme, nameOf, [.../* @__PURE__ */ new Set([...chainOf(edge.source), ...chainOf(edge.target)])]);
   const nodesG = svgEl("g", { class: "aam-nodes" });
   mainG.appendChild(nodesG);
   for (const [id, nd] of layout.nodes) {
-    const el = elements.find((e) => e.id === id);
-    if (el && !nd._isParent) (isJunction(el.type ?? "") ? drawJunction : drawNode)(nodesG, nd, el, darkMode);
+    const el = byId.get(id);
+    if (el && !nd.container) (isJunction(el.type ?? "") ? drawJunction : drawNode)(nodesG, nd, el, theme);
   }
-  container.appendChild(svg);
-  setupZoomPan(svg, layout.width);
-  return { svg, fit: `0 0 ${layout.width} ${layout.height}`, key: layoutKey(layout) };
+  container.appendChild(svg2);
+  setupZoomPan(svg2, layout.width);
+  return { svg: svg2, fit: `0 0 ${layout.width} ${layout.height}`, key: layoutKey(layout) };
 }
 function layoutKey(layout) {
   const boxes = [...layout.nodes].map(([id, nd]) => `${id}:${nd.x},${nd.y},${nd.width},${nd.height}`);
   return `${layout.width}x${layout.height};${boxes.join(";")}`;
 }
-function drawLayerBands(parentG, layout, svgWidth, darkMode) {
-  const ext = {};
-  for (const [, nd] of layout.nodes) {
-    const l = nd.layer || "Other";
-    if (nd._isChild) continue;
-    if (!ext[l]) ext[l] = { minY: Infinity, maxY: -Infinity };
-    ext[l].minY = Math.min(ext[l].minY, nd.y - nd.height / 2);
-    ext[l].maxY = Math.max(ext[l].maxY, nd.y + nd.height / 2);
-  }
-  for (const [layer, e] of Object.entries(ext)) {
-    const c = LAYER_COLORS[layer] || LAYER_COLORS.Other;
-    const pad = 20, by = e.minY - pad - LAYER_LABEL_PAD, bh = e.maxY - e.minY + pad * 2 + LAYER_LABEL_PAD;
-    parentG.appendChild(svgEl("rect", { x: 0, y: by, width: svgWidth, height: bh, fill: c.fill, opacity: "0.18", rx: "4" }));
-    const lbl = svgEl("text", { x: 14, y: by + 18, class: "aam-layer-label", fill: darkMode ? c.stroke : c.text });
-    lbl.textContent = `${layer} Layer`;
+function drawLayerBands(parentG, layout, theme) {
+  for (const band of layout.bands) {
+    const c = LAYER_COLORS[band.layer] || LAYER_COLORS.Other;
+    parentG.appendChild(svgEl("rect", {
+      x: 12,
+      y: band.y0,
+      width: layout.width - 24,
+      height: band.y1 - band.y0,
+      fill: mixOver(c.stroke, theme.bg, theme.dark ? 0.09 : 0.07),
+      rx: "3",
+      class: "aam-band"
+    }));
+    if (!band.label) continue;
+    const lbl = svgEl("text", { x: 22, y: band.y0 + 15, class: "aam-layer-label", "data-layer": band.layer, fill: theme.dark ? c.stroke : c.text });
+    lbl.textContent = band.label;
     parentG.appendChild(lbl);
   }
 }
-function drawNode(parentG, nd, el, _darkMode) {
+function foldMarker(id, x, y, folded, theme) {
+  const g = svgEl("g", { class: "aam-fold", "data-fold": id, transform: `translate(${x}, ${y})` });
+  g.appendChild(svgEl("rect", { width: 12, height: 12, rx: 2, fill: theme.bg, stroke: theme.edge, "stroke-width": "1" }));
+  g.appendChild(svgEl("path", { d: folded ? "M3 6h6M6 3v6" : "M3 6h6", stroke: theme.text, "stroke-width": "1.4" }));
+  const title = svgEl("title");
+  title.textContent = folded ? "Unfold" : "Fold";
+  g.appendChild(title);
+  return g;
+}
+function drawNode(parentG, nd, el, theme) {
   const c = LAYER_COLORS[el.layer ?? "Other"] ?? LAYER_COLORS.Other;
+  const ink = inkColors(c.stroke, theme.bg);
   const x = nd.x - NODE_WIDTH / 2, y = nd.y - NODE_HEIGHT / 2;
   const rx = nodeRx(el.type ?? "");
   const group = svgEl("g", { class: `aam-node ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
+  if (nd.collapsed) {
+    group.appendChild(svgEl("rect", { x: 4, y: 4, width: NODE_WIDTH, height: NODE_HEIGHT, rx, fill: ink.fill, stroke: ink.stroke, "stroke-width": "1.5", opacity: "0.6" }));
+  }
   group.appendChild(svgEl("rect", {
     width: NODE_WIDTH,
     height: NODE_HEIGHT,
     rx,
-    fill: c.fill,
-    stroke: c.stroke,
-    "stroke-width": "1.5",
+    fill: ink.fill,
+    stroke: ink.stroke,
+    "stroke-width": "2",
     class: "aam-node-rect"
   }));
+  if (nd.collapsed) {
+    group.appendChild(foldMarker(el.id, 5, 5, true, theme));
+    const count = svgEl("text", { x: NODE_WIDTH - 6, y: NODE_HEIGHT - 6, "text-anchor": "end", class: "aam-node-type", fill: theme.text, opacity: "0.7" });
+    count.textContent = `+${nd.hidden}`;
+    group.appendChild(count);
+  }
   const iconFn = iconFor(el.type ?? "");
   if (iconFn) {
-    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${NODE_WIDTH - 20}, 2)`, color: c.text, opacity: "0.7" });
+    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${NODE_WIDTH - 20}, 2)`, color: theme.text, opacity: "0.7" });
     iconFn(iconG);
     group.appendChild(iconG);
   }
@@ -1189,7 +1437,7 @@ function drawNode(parentG, nd, el, _darkMode) {
     "text-anchor": "middle",
     "dominant-baseline": "middle",
     class: "aam-node-label",
-    fill: c.text
+    fill: theme.text
   });
   text.textContent = truncate(el.name, 22);
   group.appendChild(text);
@@ -1198,14 +1446,14 @@ function drawNode(parentG, nd, el, _darkMode) {
     y: NODE_HEIGHT - 8,
     "text-anchor": "middle",
     class: "aam-node-type",
-    fill: c.text,
+    fill: theme.text,
     opacity: "0.6"
   });
   sub.textContent = formatType(el.type);
   group.appendChild(sub);
   const badge = badgeText(el);
   if (badge) {
-    const b = svgEl("text", { x: 6, y: 10, class: "aam-node-badge", fill: c.text });
+    const b = svgEl("text", { x: 6, y: 10, class: "aam-node-badge", fill: theme.text });
     b.textContent = badge;
     group.appendChild(b);
   }
@@ -1216,8 +1464,8 @@ ${el.documentation || ""}`;
   group.appendChild(title);
   parentG.appendChild(group);
 }
-function drawJunction(parentG, nd, el, darkMode) {
-  const color = darkMode ? "#d1d5db" : "#333333";
+function drawJunction(parentG, nd, el, theme) {
+  const color = theme.text;
   const group = svgEl("g", { class: `aam-node aam-junction ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${nd.x}, ${nd.y})` });
   const or = el.type === "OrJunction";
   group.appendChild(svgEl("circle", {
@@ -1232,8 +1480,9 @@ function drawJunction(parentG, nd, el, darkMode) {
   group.appendChild(title);
   parentG.appendChild(group);
 }
-function drawContainerNode(parentG, nd, el, _darkMode) {
+function drawContainerNode(parentG, nd, el, theme) {
   const c = LAYER_COLORS[el.layer ?? "Other"] ?? LAYER_COLORS.Other;
+  const body = mixOver(c.stroke, theme.bg, 0.14), head = mixOver(c.stroke, theme.bg, 0.3);
   const w = nd.width, h = nd.height, x = nd.x - w / 2, y = nd.y - h / 2;
   const rx = nodeRx(el.type ?? "");
   const group = svgEl("g", { class: `aam-node aam-container ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
@@ -1241,26 +1490,26 @@ function drawContainerNode(parentG, nd, el, _darkMode) {
     width: w,
     height: h,
     rx,
-    fill: c.fill,
+    fill: body,
     stroke: c.stroke,
-    "stroke-width": "1.5",
-    opacity: "0.5",
+    "stroke-width": "2",
     class: "aam-node-rect"
   }));
-  group.appendChild(svgEl("rect", { width: w, height: CONTAINER_PAD_TOP - 2, rx, fill: c.stroke, opacity: "0.2", class: "aam-node-header" }));
-  group.appendChild(svgEl("rect", { x: 0, y: Math.min(rx, CONTAINER_PAD_TOP - 2), width: w, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: c.stroke, opacity: "0.2", class: "aam-node-header" }));
-  const text = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP / 2 + 1, "dominant-baseline": "middle", class: "aam-node-label", fill: c.text, "font-size": "11" });
+  group.appendChild(svgEl("rect", { x: 1, y: 1, width: w - 2, height: CONTAINER_PAD_TOP - 3, rx, fill: head, class: "aam-node-header" }));
+  group.appendChild(svgEl("rect", { x: 1, y: Math.min(rx, CONTAINER_PAD_TOP - 3), width: w - 2, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: head, class: "aam-node-header" }));
+  group.appendChild(foldMarker(el.id, 6, (CONTAINER_PAD_TOP - 12) / 2, false, theme));
+  const text = svgEl("text", { x: 24, y: CONTAINER_PAD_TOP / 2 + 1, "dominant-baseline": "middle", class: "aam-node-label", fill: theme.text, "font-size": "11" });
   text.textContent = truncate(el.name, 30);
   group.appendChild(text);
   const iconFn = iconFor(el.type ?? "");
   if (iconFn) {
-    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${w - 20}, 3)`, color: c.text, opacity: "0.7" });
+    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${w - 20}, 3)`, color: theme.text, opacity: "0.7" });
     iconFn(iconG);
     group.appendChild(iconG);
   }
   const badge = badgeText(el);
   if (badge) {
-    const b = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP + 10, class: "aam-node-badge", fill: c.text });
+    const b = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP + 10, class: "aam-node-badge", fill: theme.text });
     b.textContent = badge;
     group.appendChild(b);
   }
@@ -1271,61 +1520,83 @@ ${el.documentation || ""}`;
   group.appendChild(title);
   parentG.appendChild(group);
 }
-function drawEdge(parentG, edgeData, darkMode) {
+function drawEdge(parentG, edgeData, theme, nameOf, chain = []) {
   const pts = edgeData.points || [];
   if (pts.length < 2) return;
   const rel = edgeData.relationship || {};
   const style = REL_STYLES[rel.type ?? ""] ?? REL_STYLES.Serving;
-  const strokeColor = darkMode ? "#aaa" : "#666";
+  const strokeColor = theme.edge;
   let d = `M ${pts[0].x} ${pts[0].y}`;
   for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`;
-  const path = svgEl("path", { d, fill: "none", stroke: strokeColor, "stroke-width": "1.3", class: `aam-edge ${statusClass(rel.status)}`.trim() });
+  const path = svgEl("path", {
+    d,
+    fill: "none",
+    stroke: strokeColor,
+    "stroke-width": "1.3",
+    class: `aam-edge ${statusClass(rel.status)}`.trim(),
+    "data-source": edgeData.source,
+    "data-target": edgeData.target,
+    "data-chain": chain.join(" ")
+  });
   if (style.dash) path.setAttribute("stroke-dasharray", style.dash);
   if (style.srcMarker) path.setAttribute("marker-start", `url(#${markerId(style.srcMarker, rel.status)})`);
   if (style.tgtMarker) path.setAttribute("marker-end", `url(#${markerId(style.tgtMarker, rel.status)})`);
+  const members = edgeData.members ?? [rel];
+  if (members.length < 2) {
+    const title2 = svgEl("title");
+    title2.textContent = `${rel.type}${rel.name ? ": " + rel.name : ""}`;
+    path.appendChild(title2);
+    parentG.appendChild(path);
+    return;
+  }
+  path.setAttribute("stroke-width", "1.9");
+  const group = svgEl("g", { class: "aam-edge-shared", "data-ends": [...new Set(members.flatMap((m) => [m.source, m.target]))].join(" ") });
   const title = svgEl("title");
-  title.textContent = `${rel.type}${rel.name ? ": " + rel.name : ""}`;
-  path.appendChild(title);
-  parentG.appendChild(path);
+  title.textContent = `${members.length} ${rel.type} relationships
+` + members.map((m) => `${nameOf(m.source)} → ${nameOf(m.target)}`).join("\n");
+  group.appendChild(title);
+  group.appendChild(path);
+  group.appendChild(svgEl("path", { d, fill: "none", stroke: "transparent", "stroke-width": "10", class: "aam-edge-hit" }));
+  parentG.appendChild(group);
 }
-function setupZoomPan(svg, fitWidth) {
-  let vb = svg.viewBox.baseVal, isPanning = false, startPt = { x: 0, y: 0 };
-  svg.addEventListener("wheel", (e) => {
+function setupZoomPan(svg2, fitWidth) {
+  let vb = svg2.viewBox.baseVal, isPanning = false, startPt = { x: 0, y: 0 };
+  svg2.addEventListener("wheel", (e) => {
     e.preventDefault();
-    const d = e.deltaY > 0 ? 1.1 : 0.9, pt = svgPoint(svg, e), ns = vb.width * d / fitWidth;
+    const d = e.deltaY > 0 ? 1.1 : 0.9, pt = svgPoint(svg2, e), ns = vb.width * d / fitWidth;
     if (ns < 0.1 || ns > 10) return;
     vb.x = pt.x - (pt.x - vb.x) * d;
     vb.y = pt.y - (pt.y - vb.y) * d;
     vb.width *= d;
     vb.height *= d;
   }, { passive: false });
-  svg.addEventListener("mousedown", (e) => {
+  svg2.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     isPanning = true;
-    startPt = svgPoint(svg, e);
-    svg.style.cursor = "grabbing";
+    startPt = svgPoint(svg2, e);
+    svg2.style.cursor = "grabbing";
   });
-  svg.addEventListener("mousemove", (e) => {
+  svg2.addEventListener("mousemove", (e) => {
     if (!isPanning) return;
-    const pt = svgPoint(svg, e);
+    const pt = svgPoint(svg2, e);
     vb.x -= pt.x - startPt.x;
     vb.y -= pt.y - startPt.y;
   });
-  svg.addEventListener("mouseup", () => {
+  svg2.addEventListener("mouseup", () => {
     isPanning = false;
-    svg.style.cursor = "grab";
+    svg2.style.cursor = "grab";
   });
-  svg.addEventListener("mouseleave", () => {
+  svg2.addEventListener("mouseleave", () => {
     isPanning = false;
-    svg.style.cursor = "grab";
+    svg2.style.cursor = "grab";
   });
-  svg.style.cursor = "grab";
+  svg2.style.cursor = "grab";
 }
-function svgPoint(svg, event) {
-  const pt = svg.createSVGPoint();
+function svgPoint(svg2, event) {
+  const pt = svg2.createSVGPoint();
   pt.x = event.clientX;
   pt.y = event.clientY;
-  const ctm = svg.getScreenCTM();
+  const ctm = svg2.getScreenCTM();
   return ctm ? pt.matrixTransform(ctm.inverse()) : pt;
 }
 function downloadBlob(blob, filename) {
@@ -1343,7 +1614,7 @@ function truncate(s, n) {
   return !s ? "" : s.length > n ? s.slice(0, n - 1) + "…" : s;
 }
 function formatType(type) {
-  return String(type ?? "").replace("Application", "App ").replace("Business", "Biz ").replace("Technology", "Tech ").replace("System", "Sys ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
+  return typeName(type);
 }
 function getTypeBadge(type) {
   return ELEMENT_TYPES.get(type)?.badge ?? "";
@@ -1393,38 +1664,82 @@ function render({ model, el }) {
   const toolbar = document.createElement("div");
   toolbar.className = "aam-toolbar";
   toolbar.innerHTML = `
-    <button class="aam-btn aam-btn-filter" title="Toggle filter panel">&#9776;</button>
+    <button class="aam-btn aam-btn-icon aam-btn-filter" title="Filter" aria-label="Filter">${ICONS.sidebar}</button>
     <span class="aam-title">ArchiMate Model</span>
     <span class="aam-legend"></span>
     <input type="file" class="aam-file-input" accept=".xml,.archimate" style="display:none">
-    <button class="aam-btn aam-btn-upload" title="Upload .xml or .archimate file">Upload</button>
-    <button class="aam-btn aam-btn-export-svg" title="Export as SVG">SVG</button>
-    <button class="aam-btn aam-btn-export-png" title="Export as PNG">PNG</button>
-    <button class="aam-btn aam-btn-fit" title="Fit to view">Fit</button>
-    <button class="aam-btn aam-btn-dark" title="Toggle dark mode">&#9681;</button>
+    <button class="aam-btn aam-btn-icon aam-btn-upload" title="Open an .xml or .archimate file" aria-label="Open a model file">${ICONS.upload}</button>
+    <span class="aam-export">
+      <button class="aam-btn aam-btn-icon aam-btn-export" title="Export" aria-label="Export" aria-haspopup="menu">${ICONS.download}</button>
+      <span class="aam-export-menu" role="menu" hidden>
+        <button class="aam-menu-item aam-btn-export-svg" role="menuitem">SVG</button>
+        <button class="aam-menu-item aam-btn-export-png" role="menuitem">PNG, 2x</button>
+      </span>
+    </span>
+    <button class="aam-btn aam-btn-icon aam-btn-fit" title="Fit the whole model" aria-label="Fit the whole model">${ICONS.zoomFit}</button>
+    <button class="aam-btn aam-btn-icon aam-btn-dark" title="Light or dark" aria-label="Light or dark"></button>
   `;
+  const darkBtn = qs(toolbar, ".aam-btn-dark");
+  const showThemeIcon = () => {
+    darkBtn.innerHTML = model.get("dark_mode") ? ICONS.sun : ICONS.moon;
+  };
+  showThemeIcon();
+  const exportMenu = qs(toolbar, ".aam-export-menu");
+  qs(toolbar, ".aam-btn-export").addEventListener("click", (e) => {
+    e.stopPropagation();
+    exportMenu.hidden = !exportMenu.hidden;
+  });
+  exportMenu.addEventListener("click", () => {
+    exportMenu.hidden = true;
+  });
+  const closeExportMenu = () => {
+    exportMenu.hidden = true;
+  };
+  document.addEventListener("click", closeExportMenu);
   wrapper.appendChild(toolbar);
   const contentArea = document.createElement("div");
   contentArea.className = "aam-content";
   wrapper.appendChild(contentArea);
-  let hiddenLayers = /* @__PURE__ */ new Set(), hiddenElemTypes = /* @__PURE__ */ new Set(), hiddenRelTypes = /* @__PURE__ */ new Set(), nestElements = true;
-  const filterPanel = buildFilterPanel(model, (l, e, r, n) => {
+  let hiddenLayers = /* @__PURE__ */ new Set(), hiddenElemTypes = /* @__PURE__ */ new Set(), hiddenRelTypes = /* @__PURE__ */ new Set(), nestElements = true, nestRelations = true;
+  const folded = /* @__PURE__ */ new Set();
+  const filterPanel = buildFilterPanel(model, (l, e, r, n, b) => {
     hiddenLayers = l;
     hiddenElemTypes = e;
     hiddenRelTypes = r;
     nestElements = n;
+    nestRelations = b;
     rebuildDiagram();
   });
-  filterPanel.element.classList.add("aam-panel-open");
   contentArea.appendChild(filterPanel.element);
   const graphContainer = document.createElement("div");
   graphContainer.className = "aam-graph-container";
   contentArea.appendChild(graphContainer);
-  contentArea.style.height = model.get("height") + "px";
+  function applySize() {
+    const height = Number(model.get("height")) || 0;
+    for (const name of ["aspectRatio", "minHeight", "maxHeight", "height"]) wrapper.style[name] = "";
+    if (height > 0) {
+      contentArea.style.height = height + "px";
+      wrapper.classList.remove("aam-sized");
+    } else {
+      contentArea.style.height = "";
+      const { aspectRatio, minHeight, maxHeight } = wrapperSize(0, 0);
+      Object.assign(wrapper.style, { aspectRatio, minHeight, maxHeight });
+      wrapper.classList.add("aam-sized");
+    }
+  }
+  applySize();
   const details = document.createElement("div");
   details.className = "aam-details";
   details.style.display = "none";
-  wrapper.appendChild(details);
+  contentArea.appendChild(details);
+  function followSelection() {
+    const selected = model.get("selected_element");
+    if (selected && model.get("show_details") !== false) showDetails(details, selected, () => {
+      model.set("selected_element", null);
+      model.save_changes();
+    });
+    else details.style.display = "none";
+  }
   function getFilteredData() {
     const ae = modelElements(model), ar = model.get("relationships") ?? [];
     const els = ae.filter((e) => !hiddenLayers.has(e.layer ?? "") && !hiddenElemTypes.has(e.type ?? ""));
@@ -1440,7 +1755,7 @@ function render({ model, el }) {
       item.className = "aam-legend-item";
       const dot = document.createElement("span");
       dot.className = "aam-dot";
-      dot.style.background = LAYER_COLORS[layer].fill;
+      dot.style.background = `color-mix(in srgb, ${LAYER_COLORS[layer].stroke} 38%, var(--aam-toolbar-bg))`;
       dot.style.borderColor = LAYER_COLORS[layer].stroke;
       item.append(dot, layer);
       return item;
@@ -1452,23 +1767,66 @@ function render({ model, el }) {
     wrapper.classList.toggle("aam-dark", dm);
     const { elements, relationships } = getFilteredData();
     const view = graphContainer.querySelector("svg.aam-svg")?.getAttribute("viewBox");
-    const drawn = renderDiagram(graphContainer, elements, relationships, dm, nestElements);
-    if (drawn && view && drawn.key === shownKey) drawn.svg.setAttribute("viewBox", view);
+    const drawn = renderDiagram(graphContainer, elements, relationships, dm, nestElements, folded, nestRelations);
+    if (drawn && view && drawn.key === shownKey) {
+      drawn.svg.setAttribute("viewBox", view);
+    } else if (drawn) {
+      const [, , w, h] = drawn.fit.split(" ").map(Number);
+      const v = openView(w, h, graphContainer.clientWidth, graphContainer.clientHeight);
+      drawn.svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.width} ${v.height}`);
+    }
     fitView = drawn?.fit ?? null;
     shownKey = drawn?.key ?? null;
     const allEls = model.get("elements") ?? [];
+    graphContainer.querySelectorAll(".aam-node").forEach((node) => {
+      node.addEventListener("mouseenter", () => {
+        hovered = node.dataset.id ?? null;
+        lightLines();
+      });
+      node.addEventListener("mouseleave", () => {
+        hovered = null;
+        lightLines();
+      });
+    });
+    lightLines();
+    graphContainer.querySelectorAll(".aam-edge-shared").forEach((line) => {
+      const ends = new Set((line.dataset.ends ?? "").split(" "));
+      const mark = (on) => graphContainer.querySelectorAll(".aam-node").forEach((node) => {
+        node.classList.toggle("aam-member", on && ends.has(node.dataset.id ?? ""));
+      });
+      line.addEventListener("mouseenter", () => mark(true));
+      line.addEventListener("mouseleave", () => mark(false));
+    });
+    graphContainer.querySelectorAll(".aam-fold").forEach((marker) => {
+      marker.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const id = marker.dataset.fold ?? "";
+        if (folded.has(id)) folded.delete(id);
+        else folded.add(id);
+        rebuildDiagram();
+      });
+    });
     graphContainer.querySelectorAll(".aam-node").forEach((node) => {
       node.addEventListener("click", () => {
         const found = allEls.find((e) => e.id === node.dataset.id);
         if (found) {
           model.set("selected_element", { ...found });
           model.save_changes();
-          showDetails(details, found);
+          followSelection();
           applyMarks();
         }
       });
     });
     applyMarks();
+  }
+  let hovered = null;
+  function lightLines() {
+    const selected = model.get("selected_element");
+    const on = new Set([hovered, selected && selected.id != null ? String(selected.id) : null].filter((v) => Boolean(v)));
+    graphContainer.querySelectorAll("path.aam-edge").forEach((line) => {
+      const chain = (line.dataset.chain ?? "").split(" ");
+      line.classList.toggle("aam-focus", chain.some((id) => on.has(id)));
+    });
   }
   function applyMarks() {
     const selected = model.get("selected_element");
@@ -1504,9 +1862,9 @@ function render({ model, el }) {
     reader.readAsText(file);
   });
   qs(toolbar, ".aam-btn-export-svg").addEventListener("click", () => {
-    const svg = graphContainer.querySelector("svg");
-    if (!svg) return;
-    const clone = svg.cloneNode(true);
+    const svg2 = graphContainer.querySelector("svg");
+    if (!svg2) return;
+    const clone = svg2.cloneNode(true);
     const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
     style.textContent = `
       .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -1524,9 +1882,9 @@ function render({ model, el }) {
     downloadBlob(blob, "archimate-diagram.svg");
   });
   qs(toolbar, ".aam-btn-export-png").addEventListener("click", () => {
-    const svg = graphContainer.querySelector("svg");
-    if (!svg) return;
-    const clone = svg.cloneNode(true);
+    const svg2 = graphContainer.querySelector("svg");
+    if (!svg2) return;
+    const clone = svg2.cloneNode(true);
     const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
     style.textContent = `
       .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -1555,7 +1913,7 @@ function render({ model, el }) {
         URL.revokeObjectURL(url);
         return;
       }
-      ctx.fillStyle = model.get("dark_mode") ? "#1e1e3a" : "#fdfdfd";
+      ctx.fillStyle = diagramTheme(graphContainer, Boolean(model.get("dark_mode"))).bg;
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
@@ -1572,26 +1930,49 @@ function render({ model, el }) {
     ["change:dark_mode", rebuildDiagram],
     ["change:dark_mode", onDarkModeChange],
     ["change:selected_element", applyMarks],
+    ["change:selected_element", followSelection],
+    ["change:show_details", followSelection],
+    ["change:selected_element", () => lightLines()],
+    ["change:dark_mode", showThemeIcon],
     ["change:highlight_ids", applyMarks],
     ["change:height", () => {
-      contentArea.style.height = model.get("height") + "px";
+      applySize();
       rebuildDiagram();
     }]
   ];
   for (const [event, fn] of listeners) model.on(event, fn);
   rebuildDiagram();
+  let opened = false;
+  function openOnce() {
+    if (opened || !wrapper.clientWidth) return opened;
+    opened = true;
+    if (wrapper.clientWidth >= 900) filterPanel.element.classList.add("aam-panel-open");
+    const svg2 = graphContainer.querySelector("svg.aam-svg");
+    if (svg2 && fitView && svg2.getAttribute("viewBox") === fitView) {
+      const [, , w, h] = fitView.split(" ").map(Number);
+      const v = openView(w, h, graphContainer.clientWidth, graphContainer.clientHeight);
+      svg2.setAttribute("viewBox", `${v.x} ${v.y} ${v.width} ${v.height}`);
+    }
+    return true;
+  }
+  const sizeWatch = !openOnce() && typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => {
+    if (openOnce()) sizeWatch?.disconnect();
+  }) : null;
+  sizeWatch?.observe(wrapper);
   return () => {
     for (const [event, fn] of listeners) model.off(event, fn);
+    document.removeEventListener("click", closeExportMenu);
     filterPanel.dispose();
     themeObserver.disconnect();
+    sizeWatch?.disconnect();
     rootObserver.disconnect();
     colorScheme?.removeEventListener("change", syncTheme);
   };
 }
-function showDetails(container, el) {
+function showDetails(container, el, onClose) {
   container.style.display = "block";
   container.innerHTML = `
-    <div class="aam-details-header"><strong></strong><button class="aam-btn aam-details-close">&times;</button></div>
+    <div class="aam-details-header"><strong></strong><button class="aam-btn aam-btn-icon aam-details-close" title="Close" aria-label="Close">${ICONS.close}</button></div>
     <div class="aam-details-body"></div>`;
   qs(container, ".aam-details-header strong").textContent = el.name ?? "";
   const body = qs(container, ".aam-details-body");
@@ -1616,6 +1997,7 @@ function showDetails(container, el) {
   }
   qs(container, ".aam-details-close").addEventListener("click", () => {
     container.style.display = "none";
+    onClose();
   });
 }
 var index_default = { render };
