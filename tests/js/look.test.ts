@@ -38,7 +38,8 @@ test("a host's colour override reads as hex in the forms CSS allows for it; othe
   assert.equal(hexColor("rgb(10, 20, 30)"), "#0a141e");
   assert.equal(hexColor("rgba(10, 20, 30, 0.5)"), "#0a141e");
   assert.equal(hexColor("rgb(10 20 30 / 50%)"), "#0a141e");
-  for (const other of ["", "teal", "rgb(300, 0, 0)", "color-mix(in srgb, red 50%, blue)", "#12345"]) assert.equal(hexColor(other), null, other);
+  const malformed = ["rgb(1,,2,3)", "rgb(1, 2 3)", "rgb(1 2 3, 0.5)", "rgb(1, 2, 3 / 0.5)", "rgb(,1,2,3)"];
+  for (const other of ["", "teal", "rgb(300, 0, 0)", "color-mix(in srgb, red 50%, blue)", "#12345", ...malformed]) assert.equal(hexColor(other), null, other);
 });
 
 test("the shared size rule (the same file as the graph and vector widgets)", () => {

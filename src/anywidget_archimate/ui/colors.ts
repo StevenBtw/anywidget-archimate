@@ -11,7 +11,9 @@ export function hexColor(value: string): string | null {
   if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
   const long = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/.exec(v);
   if (long) return `#${long[1]}`;
-  const rgb = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*(?:[,/]\s*[\d.]+%?\s*)?\)$/.exec(v);
+  // The comma form rgb(r, g, b[, a]) or the space form rgb(r g b[ / a]), not a mix of the two
+  const rgb = /^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*[\d.]+%?\s*)?\)$/.exec(v)
+    ?? /^rgba?\(\s*(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})\s*(?:\/\s*[\d.]+%?\s*)?\)$/.exec(v);
   if (rgb && rgb.slice(1, 4).every((c) => Number(c) <= 255)) {
     return "#" + rgb.slice(1, 4).map((c) => Number(c).toString(16).padStart(2, "0")).join("");
   }
