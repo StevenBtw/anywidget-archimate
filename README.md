@@ -1,6 +1,7 @@
-# anywidget-archimate
-
-Interactive ArchiMate model viewer for Jupyter, Marimo, and VS Code notebooks.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/StevenBtw/anywidget-archimate/main/.github/readme/header-dark.svg">
+  <img alt="anywidget-archimate: Interactive ArchiMate model viewer for Python notebooks." src="https://raw.githubusercontent.com/StevenBtw/anywidget-archimate/main/.github/readme/header-light.svg" width="100%">
+</picture>
 
 Renders ArchiMate models from Open Exchange Format XML or Archi `.archimate` files, or from Python data, in layer bands from top to bottom:
 
