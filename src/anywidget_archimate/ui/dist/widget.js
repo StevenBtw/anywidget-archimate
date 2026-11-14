@@ -1882,7 +1882,12 @@ function render({ model, el }) {
       node.classList.toggle("aam-highlight", marked.has(node.dataset.id ?? ""));
     });
   }
-  qs(toolbar, ".aam-btn-filter").addEventListener("click", () => filterPanel.element.classList.toggle("aam-panel-open"));
+  function setFilterOpen(open) {
+    filterPanel.element.classList.toggle("aam-panel-open", open);
+    filterPanel.element.toggleAttribute("inert", !open);
+  }
+  setFilterOpen(false);
+  qs(toolbar, ".aam-btn-filter").addEventListener("click", () => setFilterOpen(!filterPanel.element.classList.contains("aam-panel-open")));
   qs(toolbar, ".aam-btn-fit").addEventListener("click", () => {
     const s = graphContainer.querySelector("svg.aam-svg");
     if (s && fitView) s.setAttribute("viewBox", fitView);
@@ -1984,7 +1989,7 @@ function render({ model, el }) {
   function openOnce() {
     if (opened || !wrapper.clientWidth) return opened;
     opened = true;
-    if (wrapper.clientWidth >= 900) filterPanel.element.classList.add("aam-panel-open");
+    if (wrapper.clientWidth >= 900) setFilterOpen(true);
     const svg2 = graphContainer.querySelector("svg.aam-svg");
     if (svg2 && fitView && svg2.getAttribute("viewBox") === fitView) {
       const [, , w, h] = fitView.split(" ").map(Number);

@@ -21,7 +21,7 @@ Layered view release: the diagram is laid out as an architect's layered view, wi
 - **Default look**: the chrome is green-tinted graphite with hairline borders, a 3px frame and 5px controls; selection is a solid ink ring and a host highlight (`highlight_ids`) a dashed one (was amber).
 - **Relationship legend**: the filter panel shows each relationship type as a sample of its line (dash pattern and ends) instead of a colour square; the lines themselves were never coloured.
 - **Toolbar**: icon buttons for the filter, opening a file, export, fit and the theme; SVG and PNG export sit in one menu.
-- **Filter panel**: opens on load only when the widget is 900px or wider.
+- **Filter panel**: opens on load only when the widget is 900px or wider; while closed, Tab and screen readers skip it.
 - **Type names**: types are named without their layer, which the filter's subheaders, the bands and the colours already show ("Actor", "Component", "Interface" instead of "Biz Actor", "App Component", "App Interface"); types without a layer prefix keep their full name ("Data Object", "System Software").
 - **Size**: `height` defaults to 0, which makes the widget 16:10 of its width, at least 360px and at most 80% of the screen high (was a 700px diagram row).
 - **Empty state**: reads "Nothing to show yet. Open a model file, or use .load_xml(path) or ArchiMate.from_xml(path) in Python."

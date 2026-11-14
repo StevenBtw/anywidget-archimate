@@ -1192,7 +1192,13 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
     });
   }
 
-  qs(toolbar, ".aam-btn-filter").addEventListener("click", () => filterPanel.element.classList.toggle("aam-panel-open"));
+  // A closed filter panel is 0px wide and also inert: out of the Tab order and hidden from screen readers
+  function setFilterOpen(open: boolean) {
+    filterPanel.element.classList.toggle("aam-panel-open", open);
+    filterPanel.element.toggleAttribute("inert", !open);
+  }
+  setFilterOpen(false);
+  qs(toolbar, ".aam-btn-filter").addEventListener("click", () => setFilterOpen(!filterPanel.element.classList.contains("aam-panel-open")));
   qs(toolbar, ".aam-btn-fit").addEventListener("click", () => {
     const s = graphContainer.querySelector("svg.aam-svg");
     if (s && fitView) s.setAttribute("viewBox", fitView);
@@ -1291,7 +1297,7 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
   function openOnce(): boolean {
     if (opened || !wrapper.clientWidth) return opened;
     opened = true;
-    if (wrapper.clientWidth >= 900) filterPanel.element.classList.add("aam-panel-open");
+    if (wrapper.clientWidth >= 900) setFilterOpen(true);
     const svg = graphContainer.querySelector("svg.aam-svg");
     if (svg && fitView && svg.getAttribute("viewBox") === fitView) {
       const [, , w, h] = fitView.split(" ").map(Number);

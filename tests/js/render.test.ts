@@ -918,6 +918,22 @@ test("a filter row is a label: clicking its name toggles it, and the name is the
   }
 });
 
+test("a closed filter panel is inert: out of the Tab order until the filter button opens it", { skip }, async () => {
+  const { el, close } = await mount();
+  try {
+    const panel = q<HTMLElement>(el, ".aam-filter-panel");
+    assert.equal(panel.classList.contains("aam-panel-open"), false, "no size: closed");
+    assert.ok(panel.hasAttribute("inert"), "closed: inert");
+    q<HTMLElement>(el, ".aam-btn-filter").click();
+    assert.ok(panel.classList.contains("aam-panel-open"));
+    assert.ok(!panel.hasAttribute("inert"), "open: reachable");
+    q<HTMLElement>(el, ".aam-btn-filter").click();
+    assert.ok(panel.hasAttribute("inert"), "closed again: inert");
+  } finally {
+    close();
+  }
+});
+
 test("show_details false: a selection still reaches the host, the widget's own details stay closed", { skip }, async () => {
   const { model, dom, el, close } = await mount({ values: { elements: ELEMENTS, relationships: RELATIONSHIPS, show_details: false } });
   try {
@@ -962,6 +978,7 @@ test("a widget attached after render decides its opening view and filter on its 
     }
     callbacks.forEach((cb) => cb());
     assert.equal(panel.classList.contains("aam-panel-open"), true, "wide enough: the filter opens");
+    assert.ok(!panel.hasAttribute("inert"), "and is reachable by keyboard");
     const [, , w, h] = before.split(" ").map(Number);
     const v = openView(w, h, 1200, 120);
     assert.notEqual(`${v.x} ${v.y} ${v.width} ${v.height}`, before, "this size needs an opening view other than the fit");
