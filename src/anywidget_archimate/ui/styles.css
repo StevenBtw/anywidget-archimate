@@ -75,7 +75,7 @@
 }
 
 /* Keyboard focus shows on every control */
-.aam-wrapper :is(button, select, a, summary, [type="checkbox"], [type="radio"]):focus-visible {
+.aam-wrapper :is(button, select, a, summary, [type="checkbox"], [type="radio"], [role="button"]):focus-visible {
   outline: 2px solid var(--aam-ring);
   outline-offset: 2px;
 }

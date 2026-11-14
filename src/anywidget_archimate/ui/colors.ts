@@ -4,6 +4,20 @@
 /** How much of the hue fills an element (the graph's node fill) */
 export const INK_FILL = 0.38;
 
+/** A CSS colour as six-digit hex: #rgb, #rrggbb, #rrggbbaa, rgb() or rgba() (alpha dropped); null for other forms. */
+export function hexColor(value: string): string | null {
+  const v = value.trim().toLowerCase();
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(v);
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+  const long = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/.exec(v);
+  if (long) return `#${long[1]}`;
+  const rgb = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*(?:[,/]\s*[\d.]+%?\s*)?\)$/.exec(v);
+  if (rgb && rgb.slice(1, 4).every((c) => Number(c) <= 255)) {
+    return "#" + rgb.slice(1, 4).map((c) => Number(c).toString(16).padStart(2, "0")).join("");
+  }
+  return null;
+}
+
 function channels(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6);

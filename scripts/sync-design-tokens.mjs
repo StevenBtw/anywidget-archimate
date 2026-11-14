@@ -57,6 +57,8 @@ ${block(`.${PREFIX}-wrapper.${PREFIX}-dark`, "dark")}
 
 const cssPath = path.join(here, "..", "src", "anywidget_archimate", "ui", "styles.css");
 const css = readFileSync(cssPath, "utf8");
-if (!css.includes("design-tokens:start")) throw new Error("design-tokens markers not found in styles.css");
-writeFileSync(cssPath, css.replace(/\/\* design-tokens:start[\s\S]*?\/\* design-tokens:end \*\//, generated));
+// Both markers must be there: with only the start one, the replace would change nothing and still report success
+const synced = css.match(/\/\* design-tokens:start[\s\S]*?\/\* design-tokens:end \*\//);
+if (!synced) throw new Error("design-tokens:start and design-tokens:end markers not found in styles.css");
+writeFileSync(cssPath, css.replace(synced[0], () => generated));
 console.log("styles.css written");

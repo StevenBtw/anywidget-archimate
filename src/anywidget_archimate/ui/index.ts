@@ -13,7 +13,7 @@ import {
 import type { ArchiElement, ArchiRelationship, WidgetModel } from "./types.ts";
 import { layeredLayout, openView } from "./layout.ts";
 import type { LayeredLayout, PlacedNode, RoutedEdge } from "./layout.ts";
-import { inkColors, mixOver } from "./colors.ts";
+import { hexColor, inkColors, mixOver } from "./colors.ts";
 import { relationSample } from "./legend.ts";
 import { typeName } from "./names.ts";
 import { ICONS } from "./icons.ts";
@@ -25,10 +25,8 @@ interface DiagramTheme { dark: boolean; bg: string; text: string; edge: string }
 function diagramTheme(container: HTMLElement, dark: boolean): DiagramTheme {
   // Through the element's own window (a test page's window is not the global one)
   const style = container.ownerDocument?.defaultView?.getComputedStyle(container);
-  const hex = (name: string, fallback: string) => {
-    const v = style?.getPropertyValue(name).trim() ?? "";
-    return /^#[0-9a-f]{6}$/i.test(v) ? v : fallback;
-  };
+  // Hex or rgb() overrides apply; a form mixOver cannot read (a colour name, color-mix()) keeps the fallback
+  const hex = (name: string, fallback: string) => hexColor(style?.getPropertyValue(name) ?? "") ?? fallback;
   const bg = hex("--aam-graph-bg", dark ? "#161a19" : "#ffffff");
   const text = hex("--aam-text", dark ? "#e6ebe8" : "#151a18");
   return { dark, bg, text, edge: mixOver(text, bg, 0.5) };
@@ -660,13 +658,18 @@ function renderDiagram(
   const edgesG = svgEl("g", { class: "aam-edges" });
   mainG.appendChild(edgesG);
   const nameOf = (id: string) => String(elements.find((e) => e.id === id)?.name || id);
-  // A line's chain: its drawn ends and every container around them, so hovering a container lights its children's lines
+  // A line's chain: its drawn ends and every container around them, so hovering a container lights its children's
+  // lines, plus the ends of the relationships it stands for, so a child whose relationship is drawn at its container
+  // lights that line too
   const chainOf = (id: string) => {
     const ids: string[] = [];
     for (let q: string | null | undefined = id; q; q = layout.nodes.get(q)?.parent) ids.push(q);
     return ids;
   };
-  for (const edge of layout.edges) drawEdge(edgesG, edge, theme, nameOf, [...new Set([...chainOf(edge.source), ...chainOf(edge.target)])]);
+  for (const edge of layout.edges) {
+    const ends = edge.members.flatMap((r) => [String(r.source), String(r.target)]);
+    drawEdge(edgesG, edge, theme, nameOf, [...new Set([...chainOf(edge.source), ...chainOf(edge.target), ...ends])]);
+  }
 
   // Leaf nodes
   const nodesG = svgEl("g", { class: "aam-nodes" });
@@ -704,9 +707,13 @@ function drawLayerBands(parentG: SVGGElement, layout: LayeredLayout, theme: Diag
   }
 }
 
-// The fold marker of a container: a small square with "-" (fold) or "+" (unfold), handled in render()
-function foldMarker(id: string, x: number, y: number, folded: boolean, theme: DiagramTheme): SVGGElement {
-  const g = svgEl("g", { class: "aam-fold", "data-fold": id, transform: `translate(${x}, ${y})` });
+// The fold marker of a container: a small square with "-" (fold) or "+" (unfold), handled in render(); a button for
+// the keyboard too (Tab to it, Enter or Space)
+function foldMarker(id: string, name: string, x: number, y: number, folded: boolean, theme: DiagramTheme): SVGGElement {
+  const g = svgEl("g", {
+    class: "aam-fold", "data-fold": id, transform: `translate(${x}, ${y})`,
+    role: "button", tabindex: "0", "aria-label": `${folded ? "Unfold" : "Fold"} ${name}`.trim(),
+  });
   g.appendChild(svgEl("rect", { width: 12, height: 12, rx: 2, fill: theme.bg, stroke: theme.edge, "stroke-width": "1" }));
   g.appendChild(svgEl("path", { d: folded ? "M3 6h6M6 3v6" : "M3 6h6", stroke: theme.text, "stroke-width": "1.4" }));
   const title = svgEl("title");
@@ -733,7 +740,7 @@ function drawNode(parentG: SVGGElement, nd: PlacedNode, el: ArchiElement, theme:
     fill: ink.fill, stroke: ink.stroke, "stroke-width": "2", class: "aam-node-rect",
   }));
   if (nd.collapsed) {
-    group.appendChild(foldMarker(el.id, 5, 5, true, theme));
+    group.appendChild(foldMarker(el.id, String(el.name ?? ""), 5, 5, true, theme));
     const count = svgEl("text", { x: NODE_WIDTH - 6, y: NODE_HEIGHT - 6, "text-anchor": "end", class: "aam-node-type", fill: theme.text, opacity: "0.7" });
     count.textContent = `+${nd.hidden}`;
     group.appendChild(count);
@@ -807,7 +814,7 @@ function drawContainerNode(parentG: SVGGElement, nd: PlacedNode, el: ArchiElemen
   group.appendChild(svgEl("rect", { x: 1, y: 1, width: w - 2, height: CONTAINER_PAD_TOP - 3, rx, fill: head, class: "aam-node-header" }));
   group.appendChild(svgEl("rect", { x: 1, y: Math.min(rx, CONTAINER_PAD_TOP - 3), width: w - 2, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: head, class: "aam-node-header" }));
 
-  group.appendChild(foldMarker(el.id, 6, (CONTAINER_PAD_TOP - 12) / 2, false, theme));
+  group.appendChild(foldMarker(el.id, String(el.name ?? ""), 6, (CONTAINER_PAD_TOP - 12) / 2, false, theme));
   const text = svgEl("text", { x: 24, y: CONTAINER_PAD_TOP / 2 + 1, "dominant-baseline": "middle", class: "aam-node-label", fill: theme.text, "font-size": "11" });
   text.textContent = truncate(el.name, 30);
   group.appendChild(text);
@@ -1059,7 +1066,11 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
   details.className = "aam-details"; details.style.display = "none";
   contentArea.appendChild(details);
   function followSelection() {
-    const selected = model.get("selected_element") as ArchiElement | null;
+    // The host may select by id alone ({"id": ...}): the details show the model's element of that id
+    const chosen = model.get("selected_element") as ArchiElement | null;
+    const selected = chosen && chosen.id != null
+      ? modelElements(model).find((e) => String(e.id) === String(chosen.id)) ?? chosen
+      : chosen;
     // show_details false: the host shows the selection itself (undefined, from an older host, shows them)
     if (selected && model.get("show_details") !== false) showDetails(details, selected, () => { model.set("selected_element", null); model.save_changes(); });
     else details.style.display = "none";
@@ -1125,11 +1136,17 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
       line.addEventListener("mouseleave", () => mark(false));
     });
     graphContainer.querySelectorAll<SVGGElement>(".aam-fold").forEach((marker) => {
-      marker.addEventListener("click", (event) => {
-        event.stopPropagation();
+      const toggle = () => {
         const id = marker.dataset.fold ?? "";
         if (folded.has(id)) folded.delete(id); else folded.add(id);
         rebuildDiagram();
+        // The redraw replaces the marker: keep the keyboard on the new one
+        [...graphContainer.querySelectorAll<SVGGElement>(".aam-fold")].find((m) => m.dataset.fold === id)?.focus();
+      };
+      marker.addEventListener("click", (event) => { event.stopPropagation(); toggle(); });
+      marker.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault(); event.stopPropagation(); toggle();
       });
     });
     graphContainer.querySelectorAll<HTMLElement>(".aam-node").forEach((node) => {
@@ -1253,6 +1270,8 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
   ];
   for (const [event, fn] of listeners) model.on(event, fn);
   rebuildDiagram();
+  // A selection the host made before the widget was shown opens its details as well
+  followSelection();
 
   // The first real size decides the opening: the filter panel opens in a wide widget, and the diagram takes its
   // readable opening view. Now, or when the host attaches the widget later (then a ResizeObserver reports it).

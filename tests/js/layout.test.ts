@@ -303,3 +303,34 @@ test("lines between elements of the last band stay inside the diagram", () => {
   const l = layeredLayout(els, rels, { nest: false, layerOrder: LAYERS, sizeOf });
   for (const e of l.edges) for (const p of e.points) assert.ok(p.y <= l.height, `${e.relationship.id} at y ${p.y} in a ${l.height} high diagram`);
 });
+
+test("a line from a nested element to a nested element leaves its container on the side it then runs from", () => {
+  // Found by a random search: the source's escape picked its container's padding towards the target's container
+  // padding, the first channel run towards the target's port, and the join between them was a diagonal
+  const els: ArchiElement[] = [
+    { id: "e0", type: "Node", layer: "Technology" },
+    ...["e1", "e2", "e3", "e4", "e5"].map((id) => ({ id, type: "SystemSoftware", layer: "Technology" })),
+    { id: "e6", type: "Node", layer: "Technology" },
+  ];
+  const rels: ArchiRelationship[] = [
+    { id: "r0", source: "e6", target: "e1", type: "Composition" },
+    { id: "r1", source: "e3", target: "e5", type: "Realization" },
+    { id: "r2", source: "e0", target: "e4", type: "Flow" },
+    { id: "r3", source: "e4", target: "e2", type: "Composition" },
+    { id: "r5", source: "e3", target: "e4", type: "Assignment" },
+    { id: "r6", source: "e1", target: "e4", type: "Composition" },
+    { id: "r7", source: "e5", target: "e1", type: "Flow" },
+    { id: "r8", source: "e3", target: "e2", type: "Realization" },
+    { id: "r9", source: "e5", target: "e1", type: "Flow" },
+    { id: "r10", source: "e6", target: "e2", type: "Serving" },
+    { id: "r11", source: "e3", target: "e6", type: "Serving" },
+    { id: "r12", source: "e1", target: "e6", type: "Composition" },
+  ];
+  const l = layeredLayout(els, rels, { nest: true, layerOrder: LAYERS, sizeOf });
+  for (const e of l.edges) {
+    for (let i = 1; i < e.points.length; i++) {
+      const a = e.points[i - 1], b = e.points[i];
+      assert.ok(Math.abs(a.x - b.x) < 0.01 || Math.abs(a.y - b.y) < 0.01, `orthogonal segment in ${e.relationship.id}`);
+    }
+  }
+});

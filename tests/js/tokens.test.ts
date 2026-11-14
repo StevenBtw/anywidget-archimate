@@ -27,9 +27,15 @@ test("the synced block holds the token values for every chrome variable", () => 
     "btn-bg": "muted",
     "btn-hover": "border-strong",
     text: "foreground",
+    "text-muted": "muted-foreground",
     border: "border",
+    selected: "selected",
+    ring: "ring",
+    "font-body": "font-body",
     "font-mono": "font-mono",
     "radius-box": "radius-box",
+    "radius-control": "radius-control",
+    "shadow-float": "shadow-float",
   };
   for (const [selector, mode] of [[".aam-wrapper", "light"], [".aam-wrapper.aam-dark", "dark"]] as const) {
     const body = block(selector);

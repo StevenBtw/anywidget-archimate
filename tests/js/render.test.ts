@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
+import { openView } from "../../src/anywidget_archimate/ui/layout.ts";
 
 type JSDOMType = import("jsdom").JSDOM;
 let JSDOM: typeof import("jsdom").JSDOM | null = null;
@@ -720,6 +721,7 @@ test("the toolbar is icon buttons with names for screen readers, no text glyphs"
     for (const cls of ["filter", "upload", "export", "fit", "dark"]) {
       const btn = q<HTMLElement>(el, `.aam-btn-${cls}`);
       assert.ok(btn.querySelector("svg"), `${cls} has an icon`);
+      assert.equal(btn.textContent?.trim(), "", `${cls} has no text glyph`);
       assert.ok(btn.getAttribute("aria-label"), `${cls} has a name`);
     }
   } finally {
@@ -782,6 +784,15 @@ test("lines are quiet until an element is hovered or selected; then its own line
     assert.equal(lit(), 1);
     comp.dispatchEvent(new dom.window.MouseEvent("mouseleave"));
     assert.equal(lit(), 0);
+    // ... and when an interface it stands for is hovered or selected
+    const child = q<HTMLElement>(el, '.aam-node[data-id="i0"]');
+    child.dispatchEvent(new dom.window.MouseEvent("mouseenter"));
+    assert.equal(lit(), 1, "the interface's relationship is the shared line");
+    child.dispatchEvent(new dom.window.MouseEvent("mouseleave"));
+    model.set("selected_element", { id: "i1" });
+    assert.equal(lit(), 1, "selecting an interface lights the shared line");
+    model.set("selected_element", null);
+    assert.equal(lit(), 0);
     // With relationships not nested, hovering the container lights its children's lines too
     const toggle = [...el.querySelectorAll<HTMLElement>(".aam-filter-nest-toggle")].find((i) => i.textContent?.includes("Nest relationships"))!;
     const box = toggle.querySelector<HTMLInputElement>("input")!;
@@ -805,6 +816,37 @@ test("an empty widget says how to fill it, in the words the other widgets use", 
   try {
     assert.equal(q<HTMLElement>(el, ".aam-empty").textContent,
       "Nothing to show yet. Open a model file, or use .load_xml(path) or ArchiMate.from_xml(path) in Python.");
+  } finally {
+    close();
+  }
+});
+
+test("a host selection by id alone shows the model's element, also when it was made before the widget was shown", { skip }, async () => {
+  const { model, el, close } = await mount({ values: { elements: ELEMENTS, relationships: RELATIONSHIPS, selected_element: { id: "a1" } } });
+  try {
+    const details = q<HTMLElement>(el, ".aam-details");
+    assert.equal(details.style.display, "block", "open on mount");
+    assert.equal(q<HTMLElement>(details, ".aam-details-header strong").textContent, "Web shop");
+    model.set("selected_element", { id: "t3" });
+    assert.equal(q<HTMLElement>(details, ".aam-details-header strong").textContent, "PostgreSQL");
+  } finally {
+    close();
+  }
+});
+
+test("a fold marker is a button for the keyboard: Enter folds, Space unfolds", { skip }, async () => {
+  const { dom, el, close } = await mount({ values: { elements: SHARED_ELEMENTS, relationships: SHARED_RELATIONSHIPS } });
+  try {
+    const marker = () => q<SVGGElement>(el, '.aam-fold[data-fold="c"]');
+    assert.equal(marker().getAttribute("role"), "button");
+    assert.equal(marker().getAttribute("tabindex"), "0");
+    assert.equal(marker().getAttribute("aria-label"), "Fold Shop");
+    marker().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    assert.equal(el.querySelector('.aam-node[data-id="i0"]'), null, "folded: the children are not drawn");
+    assert.equal(marker().getAttribute("aria-label"), "Unfold Shop");
+    assert.equal(dom.window.document.activeElement, marker(), "the keyboard stays on the marker");
+    marker().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    assert.ok(el.querySelector('.aam-node[data-id="i0"]'), "unfolded again");
   } finally {
     close();
   }
@@ -846,12 +888,18 @@ test("a widget attached after render decides its opening view and filter on its 
   try {
     const panel = q<HTMLElement>(el, ".aam-filter-panel");
     assert.equal(panel.classList.contains("aam-panel-open"), false, "no size yet: closed");
-    // The host puts the widget on the page: it gets a size
+    const svg = q<SVGElement>(el, "svg.aam-svg");
+    const before = svg.getAttribute("viewBox") ?? "";
+    // The host puts the widget on the page: it gets a size, wide but too low to read the whole diagram fitted
     for (const prop of ["clientWidth", "clientHeight"]) {
-      Object.defineProperty(dom.window.HTMLElement.prototype, prop, { configurable: true, get() { return prop === "clientWidth" ? 1200 : 700; } });
+      Object.defineProperty(dom.window.HTMLElement.prototype, prop, { configurable: true, get() { return prop === "clientWidth" ? 1200 : 120; } });
     }
     callbacks.forEach((cb) => cb());
     assert.equal(panel.classList.contains("aam-panel-open"), true, "wide enough: the filter opens");
+    const [, , w, h] = before.split(" ").map(Number);
+    const v = openView(w, h, 1200, 120);
+    assert.notEqual(`${v.x} ${v.y} ${v.width} ${v.height}`, before, "this size needs an opening view other than the fit");
+    assert.equal(svg.getAttribute("viewBox"), `${v.x} ${v.y} ${v.width} ${v.height}`, "the diagram opens readable, from the top");
   } finally {
     delete g.ResizeObserver;
     close();

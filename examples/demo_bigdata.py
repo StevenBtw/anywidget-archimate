@@ -1,11 +1,12 @@
 """Demo: render a large ArchiMate model in Archi's native format (.archimate).
 
-Pass the model's path: python examples/demo_bigdata.py path/to/model.archimate
+Run it in a notebook or an interactive window (Jupyter, VS Code), where the last line shows the widget;
+set MODEL_PATH to the model file first.
 """
-
-import sys
 
 from anywidget_archimate import ArchiMate
 
-widget = ArchiMate.from_xml(sys.argv[1] if len(sys.argv) > 1 else "model.archimate")
+MODEL_PATH = "model.archimate"  # the path of an Archi model file
+
+widget = ArchiMate.from_xml(MODEL_PATH)
 widget  # noqa: B018  (display in notebook)

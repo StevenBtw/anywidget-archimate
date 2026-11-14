@@ -545,7 +545,7 @@ function layeredLayout(elements, relationships, opts) {
   const edges = plans.map((p) => {
     const xs = xsOf.get(p);
     const sx = portX.get(portGroup(p, "s")), tx = portX.get(portGroup(p, "t"));
-    const pts = escape(p.s, p.sSide, sx, xs[xs.length - 1]);
+    const pts = escape(p.s, p.sSide, sx, tx);
     p.channels.forEach((c, k) => {
       const ly = laneY(c, p.keys[k]);
       pts.push({ x: xs[k], y: ly }, { x: xs[k + 1], y: ly });
@@ -581,6 +581,18 @@ function openView(width, height, boxWidth, boxHeight) {
 
 // colors.ts
 var INK_FILL = 0.38;
+function hexColor(value) {
+  const v = value.trim().toLowerCase();
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/.exec(v);
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`;
+  const long = /^#([0-9a-f]{6})(?:[0-9a-f]{2})?$/.exec(v);
+  if (long) return `#${long[1]}`;
+  const rgb = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*(?:[,/]\s*[\d.]+%?\s*)?\)$/.exec(v);
+  if (rgb && rgb.slice(1, 4).every((c) => Number(c) <= 255)) {
+    return "#" + rgb.slice(1, 4).map((c) => Number(c).toString(16).padStart(2, "0")).join("");
+  }
+  return null;
+}
 function channels(hex2) {
   const h = hex2.replace("#", "");
   const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6);
@@ -596,7 +608,7 @@ function inkColors(hue, background) {
 
 // legend.ts
 function relationSample(style, color) {
-  const x1 = style.srcMarker ? 9 : 1;
+  const x1 = style.srcMarker === "circle-filled" ? 7.2 : style.srcMarker ? 9 : 1;
   const x2 = style.tgtMarker === "triangle-hollow" ? 19 : style.tgtMarker ? 21 : 27;
   const dash = style.dash ? ` stroke-dasharray="${style.dash}"` : "";
   const parts = [`<line x1="${x1}" y1="5" x2="${x2}" y2="5" stroke="${color}" stroke-width="1.3"${dash}/>`];
@@ -644,10 +656,7 @@ function wrapperSize(width, height) {
 // index.ts
 function diagramTheme(container, dark) {
   const style = container.ownerDocument?.defaultView?.getComputedStyle(container);
-  const hex2 = (name, fallback) => {
-    const v = style?.getPropertyValue(name).trim() ?? "";
-    return /^#[0-9a-f]{6}$/i.test(v) ? v : fallback;
-  };
+  const hex2 = (name, fallback) => hexColor(style?.getPropertyValue(name) ?? "") ?? fallback;
   const bg = hex2("--aam-graph-bg", dark ? "#161a19" : "#ffffff");
   const text = hex2("--aam-text", dark ? "#e6ebe8" : "#151a18");
   return { dark, bg, text, edge: mixOver(text, bg, 0.5) };
@@ -1359,7 +1368,10 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
     for (let q = id; q; q = layout.nodes.get(q)?.parent) ids.push(q);
     return ids;
   };
-  for (const edge of layout.edges) drawEdge(edgesG, edge, theme, nameOf, [.../* @__PURE__ */ new Set([...chainOf(edge.source), ...chainOf(edge.target)])]);
+  for (const edge of layout.edges) {
+    const ends = edge.members.flatMap((r) => [String(r.source), String(r.target)]);
+    drawEdge(edgesG, edge, theme, nameOf, [.../* @__PURE__ */ new Set([...chainOf(edge.source), ...chainOf(edge.target), ...ends])]);
+  }
   const nodesG = svgEl("g", { class: "aam-nodes" });
   mainG.appendChild(nodesG);
   for (const [id, nd] of layout.nodes) {
@@ -1392,8 +1404,15 @@ function drawLayerBands(parentG, layout, theme) {
     parentG.appendChild(lbl);
   }
 }
-function foldMarker(id, x, y, folded, theme) {
-  const g = svgEl("g", { class: "aam-fold", "data-fold": id, transform: `translate(${x}, ${y})` });
+function foldMarker(id, name, x, y, folded, theme) {
+  const g = svgEl("g", {
+    class: "aam-fold",
+    "data-fold": id,
+    transform: `translate(${x}, ${y})`,
+    role: "button",
+    tabindex: "0",
+    "aria-label": `${folded ? "Unfold" : "Fold"} ${name}`.trim()
+  });
   g.appendChild(svgEl("rect", { width: 12, height: 12, rx: 2, fill: theme.bg, stroke: theme.edge, "stroke-width": "1" }));
   g.appendChild(svgEl("path", { d: folded ? "M3 6h6M6 3v6" : "M3 6h6", stroke: theme.text, "stroke-width": "1.4" }));
   const title = svgEl("title");
@@ -1420,7 +1439,7 @@ function drawNode(parentG, nd, el, theme) {
     class: "aam-node-rect"
   }));
   if (nd.collapsed) {
-    group.appendChild(foldMarker(el.id, 5, 5, true, theme));
+    group.appendChild(foldMarker(el.id, String(el.name ?? ""), 5, 5, true, theme));
     const count = svgEl("text", { x: NODE_WIDTH - 6, y: NODE_HEIGHT - 6, "text-anchor": "end", class: "aam-node-type", fill: theme.text, opacity: "0.7" });
     count.textContent = `+${nd.hidden}`;
     group.appendChild(count);
@@ -1497,7 +1516,7 @@ function drawContainerNode(parentG, nd, el, theme) {
   }));
   group.appendChild(svgEl("rect", { x: 1, y: 1, width: w - 2, height: CONTAINER_PAD_TOP - 3, rx, fill: head, class: "aam-node-header" }));
   group.appendChild(svgEl("rect", { x: 1, y: Math.min(rx, CONTAINER_PAD_TOP - 3), width: w - 2, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: head, class: "aam-node-header" }));
-  group.appendChild(foldMarker(el.id, 6, (CONTAINER_PAD_TOP - 12) / 2, false, theme));
+  group.appendChild(foldMarker(el.id, String(el.name ?? ""), 6, (CONTAINER_PAD_TOP - 12) / 2, false, theme));
   const text = svgEl("text", { x: 24, y: CONTAINER_PAD_TOP / 2 + 1, "dominant-baseline": "middle", class: "aam-node-label", fill: theme.text, "font-size": "11" });
   text.textContent = truncate(el.name, 30);
   group.appendChild(text);
@@ -1733,7 +1752,8 @@ function render({ model, el }) {
   details.style.display = "none";
   contentArea.appendChild(details);
   function followSelection() {
-    const selected = model.get("selected_element");
+    const chosen = model.get("selected_element");
+    const selected = chosen && chosen.id != null ? modelElements(model).find((e) => String(e.id) === String(chosen.id)) ?? chosen : chosen;
     if (selected && model.get("show_details") !== false) showDetails(details, selected, () => {
       model.set("selected_element", null);
       model.save_changes();
@@ -1798,12 +1818,22 @@ function render({ model, el }) {
       line.addEventListener("mouseleave", () => mark(false));
     });
     graphContainer.querySelectorAll(".aam-fold").forEach((marker) => {
-      marker.addEventListener("click", (event) => {
-        event.stopPropagation();
+      const toggle = () => {
         const id = marker.dataset.fold ?? "";
         if (folded.has(id)) folded.delete(id);
         else folded.add(id);
         rebuildDiagram();
+        [...graphContainer.querySelectorAll(".aam-fold")].find((m) => m.dataset.fold === id)?.focus();
+      };
+      marker.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggle();
+      });
+      marker.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        toggle();
       });
     });
     graphContainer.querySelectorAll(".aam-node").forEach((node) => {
@@ -1942,6 +1972,7 @@ function render({ model, el }) {
   ];
   for (const [event, fn] of listeners) model.on(event, fn);
   rebuildDiagram();
+  followSelection();
   let opened = false;
   function openOnce() {
     if (opened || !wrapper.clientWidth) return opened;

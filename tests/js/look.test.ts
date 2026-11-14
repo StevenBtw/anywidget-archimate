@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { mixOver, inkColors, INK_FILL } from "../../src/anywidget_archimate/ui/colors.ts";
+import { hexColor, mixOver, inkColors, INK_FILL } from "../../src/anywidget_archimate/ui/colors.ts";
 import { relationSample } from "../../src/anywidget_archimate/ui/legend.ts";
 import { wrapperSize } from "../../src/anywidget_archimate/ui/size.ts";
 
@@ -23,6 +23,22 @@ test("a relationship's legend sample is its line: dash pattern and its ends, in 
   assert.doesNotMatch(composition, /stroke-dasharray/);
   assert.match(composition, /<polygon[^>]*fill="#666666"/);
   assert.match(relationSample({ dash: "", srcMarker: "", tgtMarker: "" }, "#666666"), /^<svg[^>]*><line /);
+});
+
+test("the legend's line starts where its source marker ends, also at the dot of an assignment", () => {
+  const x1 = (svg: string) => Number(/<line x1="([\d.]+)"/.exec(svg)?.[1]);
+  assert.equal(x1(relationSample({ dash: "", srcMarker: "circle-filled", tgtMarker: "arrow-filled" }, "#666666")), 7.2, "the dot is r 2.2 at 5");
+  assert.equal(x1(relationSample({ dash: "", srcMarker: "diamond-filled", tgtMarker: "" }, "#666666")), 9, "the diamond ends at 9");
+});
+
+test("a host's colour override reads as hex in the forms CSS allows for it; other forms keep the fallback", () => {
+  assert.equal(hexColor("#1E1E3A"), "#1e1e3a");
+  assert.equal(hexColor(" #abc "), "#aabbcc");
+  assert.equal(hexColor("#11223380"), "#112233", "alpha dropped");
+  assert.equal(hexColor("rgb(10, 20, 30)"), "#0a141e");
+  assert.equal(hexColor("rgba(10, 20, 30, 0.5)"), "#0a141e");
+  assert.equal(hexColor("rgb(10 20 30 / 50%)"), "#0a141e");
+  for (const other of ["", "teal", "rgb(300, 0, 0)", "color-mix(in srgb, red 50%, blue)", "#12345"]) assert.equal(hexColor(other), null, other);
 });
 
 test("the shared size rule (the same file as the graph and vector widgets)", () => {

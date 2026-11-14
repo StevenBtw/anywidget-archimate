@@ -598,7 +598,8 @@ export function layeredLayout(elements: ArchiElement[], relationships: ArchiRela
   const edges: RoutedEdge[] = plans.map((p) => {
     const xs = xsOf.get(p)!;
     const sx = portX.get(portGroup(p, "s"))!, tx = portX.get(portGroup(p, "t"))!;
-    const pts = escape(p.s, p.sSide, sx, xs[xs.length - 1]);
+    // Towards the side exitX chose (from the target's port), so the escape ends where the first channel run starts
+    const pts = escape(p.s, p.sSide, sx, tx);
     p.channels.forEach((c, k) => {
       const ly = laneY(c, p.keys[k]);
       pts.push({ x: xs[k], y: ly }, { x: xs[k + 1], y: ly });
