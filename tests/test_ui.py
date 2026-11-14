@@ -1,6 +1,6 @@
 """Tests for the assembled widget module (ESM string) and its JavaScript.
 
-The module must load without network access (dagre is bundled) and render in a
+The module must load without network access (no library outside the bundle) and render in a
 host that only provides the anywidget model contract. Node.js runs the JavaScript
 tests in tests/js (helpers, and rendering in jsdom after `npm ci --prefix tests/js`);
 they are skipped where Node.js is not installed.

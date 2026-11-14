@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.0.0] - 2026-11-14
+
+Layered view release: the diagram is laid out as an architect's layered view, with role bands per layer, nesting, quiet lines and folding containers, and the widget takes the look of the anywidgets family. Assignment and realization within a layer now draw as nesting (as composition and aggregation did), which the "Nest elements" box still turns off; with `height` 0 (the new default) the widget fills its cell at 16:10, and a height in pixels sets the diagram row as before.
+
+### Added
+
+- **Layered layout**: each layer is a stack of labelled bands by role (actors and roles, business services, business processes and objects; application services and interfaces, applications and data; technology services, infrastructure), with elements in columns. Relationship lines run horizontally and vertically in the gaps between bands and elements, never through an element, and break around the band labels.
+- **Folding**: the "−" on a container's header folds it into one box that shows how many elements it holds; its relationships attach to the box, one line per type and element. The "+" unfolds it.
+- **Nest relationships**: a relationship that more than half of a container's children share (same type, same element at the other end) is drawn once, at the container; hovering it marks the elements it stands for and lists the relationships. The "Nest relationships" box under "Nest elements" turns this off.
+- **Quiet lines**: relationship lines are drawn faint until their element is hovered or selected; then its lines, and those of the elements inside it, show at full strength. SVG and PNG exports draw every line in full.
+- **Readable on open**: a model too large to read when fitted opens at a readable scale from the top; "Fit" shows the whole model. SVG and PNG exports are always the whole diagram as filtered, whatever the zoom on screen.
+- **Details panel**: the selected element's details open in a panel beside the diagram, also for a selection the host makes (by id alone, or before the widget is shown), and close when the selection clears. A host that shows the selection itself passes `show_details=False`.
+- **Keyboard focus**: buttons, menus, checkboxes and fold markers show a focus ring; a fold marker folds and unfolds with Enter or Space.
+
+### Changed
+
+- **Nesting**: assignment and realization within a layer nest, besides composition and aggregation; an element nests in one parent (composition first), and relationships across layers stay lines.
+- **Elements**: drawn as a ring in their layer's ArchiMate colour over a fill of it at 38%, with text in the theme's text colour; layer bands are faint tints of the layer colour.
+- **Default look**: the chrome is green-tinted graphite with hairline borders, a 3px frame and 5px controls; selection is a solid ink ring and a host highlight (`highlight_ids`) a dashed one (was amber).
+- **Relationship legend**: the filter panel shows each relationship type as a sample of its line (dash pattern and ends) instead of a colour square; the lines themselves were never coloured.
+- **Toolbar**: icon buttons for the filter, opening a file, export, fit and the theme; SVG and PNG export sit in one menu.
+- **Filter panel**: opens on load only when the widget is 900px or wider; while closed, Tab and screen readers skip it.
+- **Type names**: types are named without their layer, which the filter's subheaders, the bands and the colours already show ("Actor", "Component", "Interface" instead of "Biz Actor", "App Component", "App Interface"); types without a layer prefix keep their full name ("Data Object", "System Software").
+- **Size**: `height` defaults to 0, which makes the widget 16:10 of its width, at least 360px and at most 80% of the screen high (was a 700px diagram row).
+- **Empty state**: reads "Nothing to show yet. Open a model file, or use .load_xml(path) or ArchiMate.from_xml(path) in Python."
+
+### Removed
+
+- **dagre**: the bundled dagre 0.8.5 is gone; the widget's own layout replaces it, and the module is about 260 KB smaller.
+
+### Fixed
+
+- **Overlapping elements**: containers nested two or more levels deep no longer overlap their neighbours.
+- **PNG export background**: the theme's canvas colour instead of a fixed dark indigo (`#1e1e3a`) in dark mode.
+- **Narrow cells**: the toolbar no longer wraps; under 640px the layer legend leaves the toolbar and the details panel floats over the diagram.
+- **Filter rows**: clicking a filter's name toggles it, as its checkbox does, and screen readers announce each checkbox by its name.
+
 ## [0.5.2] - 2026-11-12
 
 Maintenance release: the front end is TypeScript, bundled by esbuild, with no change to what the widget draws or how it is used. Upgrading needs no action.

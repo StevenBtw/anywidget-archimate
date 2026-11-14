@@ -1,6 +1,6 @@
 [project]
 name = "anywidget-archimate"
-version = "0.5.2"
+version = "1.0.0"
 description = "Interactive ArchiMate model viewer widget for Jupyter, Marimo, and VS Code notebooks"
 readme = "README.md"
 license = "Apache-2.0"
@@ -37,8 +37,22 @@ build-backend = "hatchling.build"
 packages = ["src/anywidget_archimate"]
 
 [tool.hatch.build.targets.sdist]
-# Local agent notes and settings (ignored only by a global gitignore) stay out of a locally built sdist
-exclude = [".claude"]
+only-include = [
+    "src",
+    "tests",
+    "examples",
+    "scripts",
+    "assets",
+    ".github",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "uv.lock",
+    ".gitignore",
+]
 
 [tool.ruff]
 line-length = 120

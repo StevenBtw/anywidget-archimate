@@ -46,7 +46,10 @@ class ArchiMate(anywidget.AnyWidget):
 
     # Display settings
     width = traitlets.Unicode(default_value="100%").tag(sync=True)
-    height = traitlets.Int(default_value=700).tag(sync=True)
+    # 0 (the default): the shared size rule (the cell's width at 16:10, 360px to 80% of the screen); pixels set the row
+    height = traitlets.Int(default_value=0).tag(sync=True)
+    # The widget's own details panel for the selected element; a host that shows the selection itself turns it off
+    show_details = traitlets.Bool(default_value=True).tag(sync=True)
     dark_mode = _ChosenBool(default_value=True, flag="_theme_explicit").tag(sync=True)
     # True once dark_mode is chosen (given here, set from Python or the toolbar): the widget stops following the page
     _theme_explicit = traitlets.Bool(default_value=False).tag(sync=True)

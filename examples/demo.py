@@ -8,4 +8,4 @@ sample_xml = Path(__file__).parent / "sample.xml"
 
 # Create widget from XML file
 widget = ArchiMate.from_xml(sample_xml)
-widget  # display in notebook
+widget  # noqa: B018  (display in notebook)

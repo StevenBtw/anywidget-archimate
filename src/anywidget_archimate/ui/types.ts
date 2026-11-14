@@ -32,7 +32,7 @@ export interface ArchiRelationship {
   [key: string]: unknown;
 }
 
-/** Where dagre placed a node (plus the widget's own bookkeeping). */
+/** A placed node (the earlier layout shape; layout.ts PlacedNode is what the diagram draws). */
 export interface NodePos {
   x: number;
   y: number;

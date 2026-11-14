@@ -1,16 +1,36 @@
 // ArchiMate widget renderer
-// Uses dagre for layered layout, vanilla SVG for rendering
+// The layered layout in layout.ts, drawn in vanilla SVG
 
 import {
-  DIAGRAM_CSS,
   STATUS_ACCENTS,
+  diagramCss,
   badgeText,
   highlightIds,
   markerId,
   resolveDark,
   statusClass,
 } from "./status.ts";
-import type { ArchiElement, ArchiRelationship, EdgeInfo, Layout, NodePos, WidgetModel } from "./types.ts";
+import type { ArchiElement, ArchiRelationship, WidgetModel } from "./types.ts";
+import { layeredLayout, openView } from "./layout.ts";
+import type { LayeredLayout, PlacedNode, RoutedEdge } from "./layout.ts";
+import { hexColor, inkColors, mixOver } from "./colors.ts";
+import { relationSample } from "./legend.ts";
+import { typeName } from "./names.ts";
+import { ICONS } from "./icons.ts";
+import { wrapperSize } from "./size.ts";
+
+// The colours a diagram is drawn in: the canvas and text tokens of the theme (styles.css), read from the widget so a
+// host's overrides apply; the fallbacks are the token values for a page without the stylesheet
+interface DiagramTheme { dark: boolean; bg: string; text: string; edge: string }
+function diagramTheme(container: HTMLElement, dark: boolean): DiagramTheme {
+  // Through the element's own window (a test page's window is not the global one)
+  const style = container.ownerDocument?.defaultView?.getComputedStyle(container);
+  // Hex or rgb() overrides apply; a form mixOver cannot read (a colour name, color-mix()) keeps the fallback
+  const hex = (name: string, fallback: string) => hexColor(style?.getPropertyValue(name) ?? "") ?? fallback;
+  const bg = hex("--aam-graph-bg", dark ? "#161a19" : "#ffffff");
+  const text = hex("--aam-text", dark ? "#e6ebe8" : "#151a18");
+  return { dark, bg, text, edge: mixOver(text, bg, 0.5) };
+}
 
 // ============================================================================
 // Constants
@@ -129,7 +149,6 @@ const ELEMENT_TYPES = new Map<string, ElementTypeInfo>(
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 50;
 const JUNCTION_SIZE = 12;
-const LAYER_LABEL_PAD = 30;
 
 function nodeRx(type: string): number { return ELEMENT_TYPES.get(type)?.behavior ? 14 : 4; }
 function isJunction(type: string): boolean { return ELEMENT_TYPES.get(type)?.icon === "junction"; }
@@ -156,13 +175,6 @@ const REL_STYLES: Record<string, RelStyle> = {
   Association:   { dash: "",     srcMarker: "",               tgtMarker: "" },
   Specialization:{ dash: "",     srcMarker: "",               tgtMarker: "triangle-hollow" },
   Influence:     { dash: "6 4",  srcMarker: "",               tgtMarker: "arrow-hollow" },
-};
-
-const REL_COLORS: Record<string, string> = {
-  Composition: "#7c3aed", Aggregation: "#6366f1", Assignment: "#2563eb",
-  Realization: "#0891b2", Serving: "#059669", Access: "#d97706",
-  Flow: "#dc2626", Triggering: "#be185d", Association: "#6b7280",
-  Specialization: "#4b5563", Influence: "#9333ea",
 };
 
 // ============================================================================
@@ -325,11 +337,12 @@ function qs<T extends Element>(root: ParentNode, selector: string): T {
   return found;
 }
 
-function buildMarkerDefs(): SVGDefsElement {
+function buildMarkerDefs(theme: DiagramTheme): SVGDefsElement {
   const defs = svgEl("defs");
 
   // One set per line color: the default grey, and the color of each status that recolors an edge
-  for (const [status, color] of [[null, "#666"], ...STATUS_ACCENTS] as [string | null, string][]) {
+  // Heads in the theme's line colour; a hollow head is filled with the canvas, so it reads in either theme
+  for (const [status, color] of [[null, theme.edge], ...STATUS_ACCENTS] as [string | null, string][]) {
     const arrowFilled = svgEl("marker", {
       id: markerId("arrow-filled", status), viewBox: "0 0 10 10", refX: "10", refY: "5",
       markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
@@ -342,7 +355,7 @@ function buildMarkerDefs(): SVGDefsElement {
       markerWidth: "8", markerHeight: "8", orient: "auto-start-reverse",
     });
     arrowHollow.appendChild(svgEl("path", {
-      d: "M 0 0 L 10 5 L 0 10 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+      d: "M 0 0 L 10 5 L 0 10 Z", fill: theme.bg, stroke: color, "stroke-width": "1.5",
     }));
     defs.appendChild(arrowHollow);
 
@@ -352,7 +365,7 @@ function buildMarkerDefs(): SVGDefsElement {
       markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
     });
     triHollow.appendChild(svgEl("path", {
-      d: "M 0 0 L 12 6 L 0 12 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+      d: "M 0 0 L 12 6 L 0 12 Z", fill: theme.bg, stroke: color, "stroke-width": "1.5",
     }));
     defs.appendChild(triHollow);
 
@@ -368,7 +381,7 @@ function buildMarkerDefs(): SVGDefsElement {
       markerWidth: "10", markerHeight: "10", orient: "auto-start-reverse",
     });
     diamondHollow.appendChild(svgEl("path", {
-      d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: "#fff", stroke: color, "stroke-width": "1.5",
+      d: "M 0 6 L 6 0 L 12 6 L 6 12 Z", fill: theme.bg, stroke: color, "stroke-width": "1.5",
     }));
     defs.appendChild(diamondHollow);
 
@@ -389,7 +402,7 @@ function buildMarkerDefs(): SVGDefsElement {
 
 function buildFilterPanel(
   model: WidgetModel,
-  onFilterChange: (layers: Set<string>, elementTypes: Set<string>, relTypes: Set<string>, nest: boolean) => void,
+  onFilterChange: (layers: Set<string>, elementTypes: Set<string>, relTypes: Set<string>, nest: boolean, nestRelations: boolean) => void,
 ): { element: HTMLDivElement; render: () => void; dispose: () => void } {
   const panel = document.createElement("div");
   panel.className = "aam-filter-panel";
@@ -398,9 +411,11 @@ function buildFilterPanel(
   const hiddenElementTypes = new Set<string>();
   const hiddenRelTypes = new Set<string>();
   let nestElements = true;
+  // Relationships most children of a container share are one line at the container (layout.ts SHARED_SHARE)
+  let nestRelations = true;
 
   function emitChange() {
-    onFilterChange(hiddenLayers, hiddenElementTypes, hiddenRelTypes, nestElements);
+    onFilterChange(hiddenLayers, hiddenElementTypes, hiddenRelTypes, nestElements, nestRelations);
   }
 
   function renderPanel() {
@@ -429,6 +444,16 @@ function buildFilterPanel(
     nestLbl.className = "aam-filter-name"; nestLbl.textContent = "Nest elements";
     nestItem.appendChild(nestLbl);
     nestSection.appendChild(nestItem);
+    const relItem = document.createElement("label");
+    relItem.className = "aam-filter-item aam-filter-nest-toggle";
+    relItem.title = "A relationship most of a container's children share is drawn once, at the container";
+    const relCb = document.createElement("input");
+    relCb.type = "checkbox"; relCb.checked = nestRelations; relCb.className = "aam-filter-checkbox";
+    relCb.addEventListener("change", () => { nestRelations = relCb.checked; emitChange(); });
+    const relLbl = document.createElement("span");
+    relLbl.className = "aam-filter-name"; relLbl.textContent = "Nest relationships";
+    relItem.append(relCb, relLbl);
+    nestSection.appendChild(relItem);
     content.appendChild(nestSection);
 
     // Layers
@@ -447,7 +472,7 @@ function buildFilterPanel(
       if (count === 0) continue;
       const colors = LAYER_COLORS[layer];
       layerSection.appendChild(createCheckboxItem({
-        name: `${layer} Layer`, count, color: colors.fill, borderColor: colors.stroke,
+        name: `${layer} Layer`, count, color: colors.stroke, borderColor: colors.stroke,
         isHidden: hiddenLayers.has(layer),
         onToggle: (v) => { if (v) hiddenLayers.delete(layer); else hiddenLayers.add(layer); emitChange(); },
       }));
@@ -480,7 +505,7 @@ function buildFilterPanel(
       elemSection.appendChild(sub);
       for (const [type, count] of Object.entries(types).sort((a, b) => b[1] - a[1])) {
         elemSection.appendChild(createCheckboxItem({
-          name: formatType(type) || "(no type)", count, color: colors.fill, borderColor: colors.stroke,
+          name: formatType(type) || "(no type)", count, color: colors.stroke, borderColor: colors.stroke,
           badge: getTypeBadge(type), isHidden: hiddenElementTypes.has(type),
           onToggle: (v) => { if (v) hiddenElementTypes.delete(type); else hiddenElementTypes.add(type); emitChange(); },
         }));
@@ -503,8 +528,7 @@ function buildFilterPanel(
     for (const [type, count] of Object.entries(relCounts).sort((a, b) => b[1] - a[1])) {
       const st = REL_STYLES[type] ?? { dash: "", srcMarker: "", tgtMarker: "" };
       relSection.appendChild(createCheckboxItem({
-        name: type, count, color: REL_COLORS[type] || "#6b7280",
-        borderColor: REL_COLORS[type] || "#6b7280", dash: st.dash,
+        name: type, count, color: "", sample: relationSample(st, "currentColor"),
         isHidden: hiddenRelTypes.has(type),
         onToggle: (v) => { if (v) hiddenRelTypes.delete(type); else hiddenRelTypes.add(type); emitChange(); },
       }));
@@ -535,25 +559,37 @@ function addToggleLinks(header: HTMLElement, allKeys: string[], hiddenSet: Set<s
   header.appendChild(links);
 }
 
-function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHidden, onToggle }: {
+function createCheckboxItem({ name, count, color, borderColor, badge, sample, isHidden, onToggle }: {
   name: string;
   count: number;
   color: string;
   borderColor?: string;
   badge?: string;
-  dash?: string;
+  // SVG markup of a relationship's line (legend.ts; constants only, no data)
+  sample?: string;
   isHidden: boolean;
   onToggle: (checked: boolean) => void;
-}): HTMLDivElement {
-  const item = document.createElement("div");
+}): HTMLLabelElement {
+  // A label around the checkbox: the whole row toggles it, and the name is the checkbox's accessible name
+  const item = document.createElement("label");
   item.className = "aam-filter-item" + (isHidden ? " aam-filter-hidden" : "");
   const cb = document.createElement("input");
   cb.type = "checkbox"; cb.checked = !isHidden; cb.className = "aam-filter-checkbox";
+  // The name alone, not the badge and count the row also holds
+  cb.setAttribute("aria-label", name);
   cb.addEventListener("change", () => { item.classList.toggle("aam-filter-hidden", !cb.checked); onToggle(cb.checked); });
   item.appendChild(cb);
   const sw = document.createElement("span");
-  sw.className = "aam-filter-swatch"; sw.style.background = color; sw.style.borderColor = borderColor || color;
-  if (dash) sw.style.borderStyle = "dashed";
+  if (sample) {
+    // A relationship: a sample of its line (dash pattern and ends), as the diagram draws it
+    sw.className = "aam-filter-line";
+    sw.innerHTML = sample;
+  } else {
+    // A layer or element type: drawn like the element, a ring in the hue over 38% of it
+    sw.className = "aam-filter-swatch";
+    sw.style.background = `color-mix(in srgb, ${color} 38%, var(--aam-panel-bg))`;
+    sw.style.borderColor = borderColor || color;
+  }
   item.appendChild(sw);
   if (badge) {
     const b = document.createElement("span"); b.className = "aam-filter-badge"; b.textContent = badge;
@@ -566,466 +602,8 @@ function createCheckboxItem({ name, count, color, borderColor, badge, dash, isHi
   return item;
 }
 
-// ============================================================================
-// Layout
-// ============================================================================
-
-const NESTING_REL_TYPES = new Set(["Composition", "Aggregation"]);
+// A container's header band (the label row above its children; layout.ts SPACING.containerHead)
 const CONTAINER_PAD_TOP = 28;
-const CONTAINER_PAD = 14;
-const CHILD_COLS = 3;
-const CHILD_GAP = 10;
-const LAYER_GAP = 60;
-const LAYER_MARGIN = 50;
-
-function computeLayout(elements: ArchiElement[], relationships: ArchiRelationship[], nestElements: boolean): Layout {
-  const elementIds = new Set(elements.map((e) => e.id));
-  const elemById = new Map(elements.map((e) => [e.id, e]));
-
-  // --- Nesting ---
-  const nestedEdgeIds = new Set<string>();
-  const childToParent = new Map<string, string>();
-  const parentToChildren = new Map<string, string[]>();
-  if (nestElements) {
-    for (const rel of relationships) {
-      if (!NESTING_REL_TYPES.has(rel.type ?? "")) continue;
-      if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
-      if (!childToParent.has(rel.target)) {
-        childToParent.set(rel.target, rel.source);
-        if (!parentToChildren.has(rel.source)) parentToChildren.set(rel.source, []);
-        (parentToChildren.get(rel.source) as string[]).push(rel.target);
-        nestedEdgeIds.add(rel.id);
-      }
-    }
-  }
-  const parentIds = new Set(parentToChildren.keys());
-
-  function containerSize(parentId: string): { width: number; height: number } {
-    const ch = parentToChildren.get(parentId) ?? [];
-    const cols = Math.min(ch.length, CHILD_COLS);
-    const rows = Math.ceil(ch.length / CHILD_COLS);
-    return {
-      width: Math.max(cols * NODE_WIDTH + (cols - 1) * CHILD_GAP + CONTAINER_PAD * 2, NODE_WIDTH + CONTAINER_PAD * 2),
-      height: Math.max(rows * NODE_HEIGHT + (rows - 1) * CHILD_GAP + CONTAINER_PAD_TOP + CONTAINER_PAD, NODE_HEIGHT + CONTAINER_PAD_TOP + CONTAINER_PAD),
-    };
-  }
-
-  // --- Group top-level elements by layer ---
-  const layerElements: Record<string, ArchiElement[]> = {};
-  for (const el of elements) {
-    if (childToParent.has(el.id)) continue;
-    const layer = el.layer ?? "Other";
-    if (!layerElements[layer]) layerElements[layer] = [];
-    layerElements[layer].push(el);
-  }
-
-  // --- Layout each layer with dagre LR ---
-  const nodePositions = new Map<string, NodePos>();
-  let currentY = LAYER_MARGIN;
-  let maxWidth = 0;
-  const orderedLayers = LAYER_ORDER.filter((l) => layerElements[l] && layerElements[l].length > 0);
-
-  for (const layer of orderedLayers) {
-    const layerEls = layerElements[layer];
-    const layerIds = new Set(layerEls.map((e) => e.id));
-
-    // Find within-layer edges
-    const withinEdges: { src: string; tgt: string; rel: ArchiRelationship }[] = [];
-    for (const rel of relationships) {
-      if (nestedEdgeIds.has(rel.id)) continue;
-      let src = rel.source, tgt = rel.target;
-      if (childToParent.has(src)) src = childToParent.get(src) as string;
-      if (childToParent.has(tgt)) tgt = childToParent.get(tgt) as string;
-      if (src === tgt) continue;
-      if (layerIds.has(src) && layerIds.has(tgt)) withinEdges.push({ src, tgt, rel });
-    }
-
-    // Find connected vs disconnected nodes
-    const connectedIds = new Set<string>();
-    withinEdges.forEach(({ src, tgt }) => { connectedIds.add(src); connectedIds.add(tgt); });
-    const connected = layerEls.filter((e) => connectedIds.has(e.id));
-    const disconnected = layerEls.filter((e) => !connectedIds.has(e.id));
-
-    let layerW = 0, layerH = 0;
-
-    // Layout connected nodes with dagre LR
-    if (connected.length > 0) {
-      const g = new dagre.graphlib.Graph({ multigraph: true });
-      g.setGraph({ rankdir: "LR", ranksep: 60, nodesep: 30, edgesep: 20, marginx: 20, marginy: 20 });
-      g.setDefaultEdgeLabel(() => ({}));
-
-      for (const el of connected) {
-        const isP = parentIds.has(el.id);
-        const sz = isP ? containerSize(el.id) : nodeSize(el);
-        g.setNode(el.id, { label: el.name, width: sz.width, height: sz.height });
-      }
-      for (const { src, tgt, rel } of withinEdges) {
-        g.setEdge(src, tgt, { relationship: rel }, rel.id);
-      }
-      dagre.layout(g);
-
-      const gInfo = g.graph();
-      layerW = gInfo.width || 0;
-      layerH = gInfo.height || 0;
-
-      for (const nodeId of g.nodes()) {
-        const nd = g.node(nodeId);
-        nodePositions.set(nodeId, {
-          x: nd.x, y: nd.y + currentY,
-          width: nd.width, height: nd.height,
-          layer, _isParent: parentIds.has(nodeId),
-        });
-      }
-    }
-
-    // Layout disconnected nodes in a horizontal row below the dagre output
-    if (disconnected.length > 0) {
-      const gap = 20;
-      const startY = currentY + layerH + (layerH > 0 ? 30 : 0);
-      let rowX = 20;
-      let rowH = 0;
-
-      for (const el of disconnected) {
-        const isP = parentIds.has(el.id);
-        const sz = isP ? containerSize(el.id) : nodeSize(el);
-        nodePositions.set(el.id, {
-          x: rowX + sz.width / 2, y: startY + sz.height / 2,
-          width: sz.width, height: sz.height,
-          layer, _isParent: isP,
-        });
-        rowX += sz.width + gap;
-        rowH = Math.max(rowH, sz.height);
-      }
-      layerW = Math.max(layerW, rowX);
-      layerH += (layerH > 0 ? 30 : 0) + rowH;
-    }
-
-    maxWidth = Math.max(maxWidth, layerW);
-    currentY += layerH + LAYER_GAP;
-  }
-
-  // --- Center layers ---
-  for (const layer of orderedLayers) {
-    const layerEls = layerElements[layer];
-    let minX = Infinity, maxX = -Infinity;
-    for (const el of layerEls) {
-      const pos = nodePositions.get(el.id);
-      if (pos) { minX = Math.min(minX, pos.x - pos.width / 2); maxX = Math.max(maxX, pos.x + pos.width / 2); }
-    }
-    const lw = maxX - minX;
-    const ox = (maxWidth - lw) / 2 - minX + LAYER_MARGIN;
-    for (const el of layerEls) {
-      const pos = nodePositions.get(el.id);
-      if (pos) pos.x += ox;
-    }
-  }
-
-  // =====================================================================
-  // Barycenter + gravity optimization to reduce total edge length
-  // =====================================================================
-  // Collect all cross-layer edges (mapped to top-level nodes)
-  const crossEdges: { src: string; tgt: string }[] = [];
-  for (const rel of relationships) {
-    if (nestedEdgeIds.has(rel.id)) continue;
-    if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
-    let src = rel.source, tgt = rel.target;
-    if (childToParent.has(src)) src = childToParent.get(src) as string;
-    if (childToParent.has(tgt)) tgt = childToParent.get(tgt) as string;
-    if (src === tgt) continue;
-    const se = elemById.get(src), te = elemById.get(tgt);
-    if (!se || !te || se.layer === te.layer) continue;
-    crossEdges.push({ src, tgt });
-  }
-
-  // Build adjacency: nodeId → [ids in other layers it connects to]
-  const crossNeighbors = new Map<string, string[]>();
-  for (const { src, tgt } of crossEdges) {
-    if (!crossNeighbors.has(src)) crossNeighbors.set(src, []);
-    if (!crossNeighbors.has(tgt)) crossNeighbors.set(tgt, []);
-    (crossNeighbors.get(src) as string[]).push(tgt);
-    (crossNeighbors.get(tgt) as string[]).push(src);
-  }
-
-  // Identify connected components within each layer (nodes linked by dagre edges)
-  function findComponents(layerEls: ArchiElement[], withinLayerEdges: { src: string; tgt: string }[]): string[][] {
-    const parent = new Map<string, string>();
-    layerEls.forEach((e) => parent.set(e.id, e.id));
-    function find(x: string): string { while (parent.get(x) !== x) { const p = parent.get(x) as string; parent.set(x, parent.get(p) as string); x = p; } return x; }
-    function union(a: string, b: string) { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); }
-    withinLayerEdges.forEach(({ src, tgt }) => { if (parent.has(src) && parent.has(tgt)) union(src, tgt); });
-    const groups = new Map<string, string[]>();
-    layerEls.forEach((e) => {
-      const root = find(e.id);
-      if (!groups.has(root)) groups.set(root, []);
-      (groups.get(root) as string[]).push(e.id);
-    });
-    return [...groups.values()];
-  }
-
-  // Compute barycenter of a group of nodes (average x of their cross-layer neighbors)
-  function groupBarycenter(nodeIds: string[]): number | null {
-    let sumX = 0, count = 0;
-    for (const id of nodeIds) {
-      const neighbors = crossNeighbors.get(id) || [];
-      for (const nid of neighbors) {
-        const np = nodePositions.get(nid);
-        if (np) { sumX += np.x; count++; }
-      }
-    }
-    return count > 0 ? sumX / count : null;
-  }
-
-  // Run 3 passes: top-down, bottom-up, top-down (iterative refinement)
-  for (let pass = 0; pass < 3; pass++) {
-    const layerOrder = pass % 2 === 0 ? orderedLayers : [...orderedLayers].reverse();
-
-    for (const layer of layerOrder) {
-      const layerEls = layerElements[layer];
-      if (!layerEls || layerEls.length === 0) continue;
-
-      // Rebuild within-layer edges for this layer
-      const layerIds = new Set(layerEls.map((e) => e.id));
-      const withinEdges = [];
-      for (const rel of relationships) {
-        if (nestedEdgeIds.has(rel.id)) continue;
-        let src = rel.source, tgt = rel.target;
-        if (childToParent.has(src)) src = childToParent.get(src) as string;
-        if (childToParent.has(tgt)) tgt = childToParent.get(tgt) as string;
-        if (src === tgt) continue;
-        if (layerIds.has(src) && layerIds.has(tgt)) withinEdges.push({ src, tgt });
-      }
-
-      // Find connected components
-      const components = findComponents(layerEls, withinEdges);
-
-      // For each component, compute its barycenter target and current center
-      const compInfos = components.map((ids) => {
-        const bc = groupBarycenter(ids);
-        let minX = Infinity, maxX = -Infinity;
-        for (const id of ids) {
-          const p = nodePositions.get(id);
-          if (p) { minX = Math.min(minX, p.x - p.width / 2); maxX = Math.max(maxX, p.x + p.width / 2); }
-        }
-        const centerX = (minX + maxX) / 2;
-        const width = maxX - minX;
-        return { ids, bc, centerX, width };
-      });
-
-      // Sort components by barycenter (components with cross-layer connections first)
-      compInfos.sort((a, b) => {
-        if (a.bc === null && b.bc === null) return 0;
-        if (a.bc === null) return 1;
-        if (b.bc === null) return -1;
-        return a.bc - b.bc;
-      });
-
-      // Reposition: place components left-to-right in barycenter order
-      // For components WITH a barycenter, shift toward it (gravity pull)
-      // For components WITHOUT, place them in remaining gaps
-      const gap = 30;
-      let cursor = LAYER_MARGIN;
-
-      for (const ci of compInfos) {
-        let targetX;
-        if (ci.bc !== null) {
-          // Gravity: pull toward barycenter, but don't overlap with cursor
-          targetX = Math.max(cursor + ci.width / 2, ci.bc);
-        } else {
-          targetX = cursor + ci.width / 2;
-        }
-
-        const shiftX = targetX - ci.centerX;
-        for (const id of ci.ids) {
-          const p = nodePositions.get(id);
-          if (p) p.x += shiftX;
-        }
-
-        // Update cursor past this component
-        let compMaxX = -Infinity;
-        for (const id of ci.ids) {
-          const p = nodePositions.get(id);
-          if (p) compMaxX = Math.max(compMaxX, p.x + p.width / 2);
-        }
-        cursor = compMaxX + gap;
-      }
-
-      // Update maxWidth
-      for (const el of layerEls) {
-        const p = nodePositions.get(el.id);
-        if (p) maxWidth = Math.max(maxWidth, p.x + p.width / 2 + LAYER_MARGIN);
-      }
-    }
-  }
-
-  // --- Position children inside parents ---
-  for (const [pid, children] of parentToChildren) {
-    const pp = nodePositions.get(pid);
-    if (!pp) continue;
-    const px = pp.x - pp.width / 2 + CONTAINER_PAD;
-    const py = pp.y - pp.height / 2 + CONTAINER_PAD_TOP;
-    children.forEach((cid, i) => {
-      const col = i % CHILD_COLS, row = Math.floor(i / CHILD_COLS);
-      const ce = elemById.get(cid);
-      nodePositions.set(cid, {
-        x: px + col * (NODE_WIDTH + CHILD_GAP) + NODE_WIDTH / 2,
-        y: py + row * (NODE_HEIGHT + CHILD_GAP) + NODE_HEIGHT / 2,
-        width: NODE_WIDTH, height: NODE_HEIGHT,
-        layer: ce?.layer ?? pp.layer, _isChild: true,
-      });
-    });
-  }
-
-  // --- Build edges with orthogonal routing + port distribution + jog offset ---
-
-  // First pass: collect all edges and count ports per node side
-  const edgeInfos: { src: string; tgt: string; sp: NodePos; tp: NodePos; sL: number; tL: number; rel: ArchiRelationship }[] = [];
-  const srcBottomPorts = new Map<string, number>(); // nodeId → count of edges leaving bottom
-  const srcTopPorts = new Map<string, number>();    // nodeId → count of edges leaving top
-  const srcRightPorts = new Map<string, number>();  // nodeId → count of edges leaving right
-  const tgtTopPorts = new Map<string, number>();    // nodeId → count of edges entering top
-  const tgtBottomPorts = new Map<string, number>(); // nodeId → count of edges entering bottom
-  const tgtLeftPorts = new Map<string, number>();   // nodeId → count of edges entering left
-
-  for (const rel of relationships) {
-    if (nestedEdgeIds.has(rel.id)) continue;
-    if (!elementIds.has(rel.source) || !elementIds.has(rel.target)) continue;
-
-    let src = rel.source, tgt = rel.target;
-    if (childToParent.has(src)) src = childToParent.get(src) as string;
-    if (childToParent.has(tgt)) tgt = childToParent.get(tgt) as string;
-    if (src === tgt) continue;
-
-    const sp = nodePositions.get(src), tp = nodePositions.get(tgt);
-    if (!sp || !tp) continue;
-    const se = elemById.get(src), te = elemById.get(tgt);
-    if (!se || !te) continue;
-    const sL = LAYER_RANK[se.layer ?? "Other"] ?? LAYER_RANK.Other, tL = LAYER_RANK[te.layer ?? "Other"] ?? LAYER_RANK.Other;
-
-    edgeInfos.push({ src, tgt, sp, tp, sL, tL, rel });
-
-    // Count ports per side
-    if (sL === tL) {
-      // Same layer: right→left
-      srcRightPorts.set(src, (srcRightPorts.get(src) || 0) + 1);
-      tgtLeftPorts.set(tgt, (tgtLeftPorts.get(tgt) || 0) + 1);
-    } else if (sL < tL) {
-      // Source above target: bottom→top
-      srcBottomPorts.set(src, (srcBottomPorts.get(src) || 0) + 1);
-      tgtTopPorts.set(tgt, (tgtTopPorts.get(tgt) || 0) + 1);
-    } else {
-      // Source below target: top→bottom
-      srcTopPorts.set(src, (srcTopPorts.get(src) || 0) + 1);
-      tgtBottomPorts.set(tgt, (tgtBottomPorts.get(tgt) || 0) + 1);
-    }
-  }
-
-  // Port index counters (reset per node per side)
-  const srcBottomIdx = new Map<string, number>();
-  const srcTopIdx = new Map<string, number>();
-  const srcRightIdx = new Map<string, number>();
-  const tgtTopIdx = new Map<string, number>();
-  const tgtBottomIdx = new Map<string, number>();
-  const tgtLeftIdx = new Map<string, number>();
-
-  function getPortX(nodePos: NodePos, portMap: Map<string, number>, idxMap: Map<string, number>, nodeId: string): number {
-    const total = portMap.get(nodeId) || 1;
-    const idx = (idxMap.get(nodeId) || 0);
-    idxMap.set(nodeId, idx + 1);
-    // Distribute ports across 70% of node width, centered
-    const span = nodePos.width * 0.7;
-    const start = nodePos.x - span / 2;
-    if (total === 1) return nodePos.x;
-    return start + (idx / (total - 1)) * span;
-  }
-
-  function getPortY(nodePos: NodePos, portMap: Map<string, number>, idxMap: Map<string, number>, nodeId: string): number {
-    const total = portMap.get(nodeId) || 1;
-    const idx = (idxMap.get(nodeId) || 0);
-    idxMap.set(nodeId, idx + 1);
-    const span = nodePos.height * 0.6;
-    const start = nodePos.y - span / 2;
-    if (total === 1) return nodePos.y;
-    return start + (idx / (total - 1)) * span;
-  }
-
-  // Sort edges by target x-position to assign ports left-to-right (reduces crossings)
-  edgeInfos.sort((a, b) => {
-    if (a.sL === a.tL && b.sL === b.tL) return a.tp.x - b.tp.x;
-    if (a.sL !== a.tL && b.sL !== b.tL) return a.tp.x - b.tp.x;
-    return 0;
-  });
-
-  // Second pass: build edge paths with distributed ports + offset jogs
-  const edgeList = [];
-  const JOG_SPREAD = 8; // pixels between parallel horizontal jog segments
-  let jogCounter = 0;
-
-  for (const { src, tgt, sp, tp, sL, tL, rel } of edgeInfos) {
-    let points;
-
-    if (sL === tL) {
-      // Same layer: right side of source → left side of target
-      const sx = sp.x + sp.width / 2;
-      const tx = tp.x - tp.width / 2;
-      const sy = getPortY(sp, srcRightPorts, srcRightIdx, src);
-      const ty = getPortY(tp, tgtLeftPorts, tgtLeftIdx, tgt);
-      if (Math.abs(sy - ty) < 5) {
-        points = [{ x: sx, y: sy }, { x: tx, y: ty }];
-      } else {
-        const midX = (sx + tx) / 2 + (jogCounter++ % 5 - 2) * JOG_SPREAD;
-        points = [{ x: sx, y: sy }, { x: midX, y: sy }, { x: midX, y: ty }, { x: tx, y: ty }];
-      }
-    } else if (sL < tL) {
-      // Source above target: exit bottom, enter top
-      const srcX = getPortX(sp, srcBottomPorts, srcBottomIdx, src);
-      const tgtX = getPortX(tp, tgtTopPorts, tgtTopIdx, tgt);
-      const srcY = sp.y + sp.height / 2;
-      const tgtY = tp.y - tp.height / 2;
-
-      if (Math.abs(srcX - tgtX) < 5) {
-        points = [{ x: srcX, y: srcY }, { x: tgtX, y: tgtY }];
-      } else {
-        // V-H-V with offset jog
-        const baseMidY = (srcY + tgtY) / 2;
-        const jogOffset = (jogCounter++ % 7 - 3) * JOG_SPREAD;
-        const midY = baseMidY + jogOffset;
-        points = [
-          { x: srcX, y: srcY },
-          { x: srcX, y: midY },
-          { x: tgtX, y: midY },
-          { x: tgtX, y: tgtY },
-        ];
-      }
-    } else {
-      // Source below target: exit top, enter bottom
-      const srcX = getPortX(sp, srcTopPorts, srcTopIdx, src);
-      const tgtX = getPortX(tp, tgtBottomPorts, tgtBottomIdx, tgt);
-      const srcY = sp.y - sp.height / 2;
-      const tgtY = tp.y + tp.height / 2;
-
-      if (Math.abs(srcX - tgtX) < 5) {
-        points = [{ x: srcX, y: srcY }, { x: tgtX, y: tgtY }];
-      } else {
-        const baseMidY = (srcY + tgtY) / 2;
-        const jogOffset = (jogCounter++ % 7 - 3) * JOG_SPREAD;
-        const midY = baseMidY + jogOffset;
-        points = [
-          { x: srcX, y: srcY },
-          { x: srcX, y: midY },
-          { x: tgtX, y: midY },
-          { x: tgtX, y: tgtY },
-        ];
-      }
-    }
-
-    edgeList.push({ points, relationship: rel });
-  }
-
-  const totalW = maxWidth + LAYER_MARGIN * 2;
-  const totalH = currentY - LAYER_GAP + LAYER_MARGIN;
-
-  return { nodes: nodePositions, edges: edgeList, width: totalW, height: totalH };
-}
 
 // ============================================================================
 // Rendering
@@ -1039,47 +617,73 @@ function renderDiagram(
   relationships: ArchiRelationship[],
   darkMode: boolean,
   nestElements: boolean,
+  collapsed: Set<string> = new Set(),
+  nestRelations = true,
 ): { svg: SVGSVGElement; fit: string; key: string } | null {
   container.innerHTML = "";
   if (!elements.length) {
-    container.innerHTML = '<div class="aam-empty">No ArchiMate elements to display. Use <code>.load_xml(path)</code> or <code>ArchiMate.from_xml(path)</code>.</div>';
+    container.innerHTML = '<div class="aam-empty">Nothing to show yet. Open a model file, or use <code>.load_xml(path)</code> or <code>ArchiMate.from_xml(path)</code> in Python.</div>';
     return null;
   }
 
-  const layout = computeLayout(elements, relationships, nestElements);
+  const layout = layeredLayout(elements, relationships, {
+    nest: nestElements, collapsed, bundle: nestRelations, layerOrder: LAYER_ORDER,
+    sizeOf: (el) => (isJunction(el.type ?? "") ? { width: JUNCTION_SIZE, height: JUNCTION_SIZE } : nodeSize(el)),
+  });
 
   const svg = svgEl("svg", {
     width: "100%", height: "100%",
-    viewBox: `0 0 ${layout.width} ${layout.height}`, class: "aam-svg",
+    // Lines quiet until their element is hovered or selected (styles.css .aam-lines-quiet)
+    viewBox: `0 0 ${layout.width} ${layout.height}`, class: "aam-svg aam-lines-quiet",
   });
   const style = svgEl("style");
-  style.textContent = DIAGRAM_CSS;
+  // Comparison styling for the theme (status fills that keep labels readable in dark)
+  style.textContent = diagramCss(darkMode, diagramTheme(container, darkMode).bg);
   svg.appendChild(style);
-  svg.appendChild(buildMarkerDefs());
+  svg.appendChild(buildMarkerDefs(diagramTheme(container, darkMode)));
   const mainG = svgEl("g", { class: "aam-main" });
   svg.appendChild(mainG);
 
-  drawLayerBands(mainG, layout, layout.width, darkMode);
+  const theme = diagramTheme(container, darkMode);
+  const labelsG = svgEl("g", { class: "aam-band-labels" });
+  drawLayerBands(mainG, labelsG, layout, theme);
 
-  // Containers (behind everything)
+  // Containers behind everything, outer ones first
+  const byId = new Map(elements.map((e) => [e.id, e]));
   const containersG = svgEl("g", { class: "aam-containers" });
   mainG.appendChild(containersG);
-  for (const [id, nd] of layout.nodes) {
-    const el = elements.find((e) => e.id === id);
-    if (el && nd._isParent) drawContainerNode(containersG, nd, el, darkMode);
+  const containers = [...layout.nodes].filter(([, nd]) => nd.container).sort((a, b) => a[1].depth - b[1].depth);
+  for (const [id, nd] of containers) {
+    const el = byId.get(id);
+    if (el) drawContainerNode(containersG, nd, el, theme);
   }
 
   // Edges
   const edgesG = svgEl("g", { class: "aam-edges" });
   mainG.appendChild(edgesG);
-  for (const edge of layout.edges) drawEdge(edgesG, edge, darkMode);
+  const nameOf = (id: string) => String(elements.find((e) => e.id === id)?.name || id);
+  // A line's chain: its drawn ends and every container around them, so hovering a container lights its children's
+  // lines, plus the ends of the relationships it stands for, so a child whose relationship is drawn at its container
+  // lights that line too
+  const chainOf = (id: string) => {
+    const ids: string[] = [];
+    for (let q: string | null | undefined = id; q; q = layout.nodes.get(q)?.parent) ids.push(q);
+    return ids;
+  };
+  for (const edge of layout.edges) {
+    const ends = edge.members.flatMap((r) => [String(r.source), String(r.target)]);
+    drawEdge(edgesG, edge, theme, nameOf, [...new Set([...chainOf(edge.source), ...chainOf(edge.target), ...ends])]);
+  }
+
+  // Band labels above the lines (they sit in the band's top padding, clear of every element)
+  mainG.appendChild(labelsG);
 
   // Leaf nodes
   const nodesG = svgEl("g", { class: "aam-nodes" });
   mainG.appendChild(nodesG);
   for (const [id, nd] of layout.nodes) {
-    const el = elements.find((e) => e.id === id);
-    if (el && !nd._isParent) (isJunction(el.type ?? "") ? drawJunction : drawNode)(nodesG, nd, el, darkMode);
+    const el = byId.get(id);
+    if (el && !nd.container) (isJunction(el.type ?? "") ? drawJunction : drawNode)(nodesG, nd, el, theme);
   }
 
   container.appendChild(svg);
@@ -1089,47 +693,77 @@ function renderDiagram(
 
 // Every element's id and box, and the diagram size: equal keys mean a redraw moved nothing (status, badge and
 // theme never move anything)
-function layoutKey(layout: Layout): string {
+function layoutKey(layout: LayeredLayout): string {
   const boxes = [...layout.nodes].map(([id, nd]) => `${id}:${nd.x},${nd.y},${nd.width},${nd.height}`);
   return `${layout.width}x${layout.height};${boxes.join(";")}`;
 }
 
-function drawLayerBands(parentG: SVGGElement, layout: Layout, svgWidth: number, darkMode: boolean): void {
-  const ext: Record<string, { minY: number; maxY: number }> = {};
-  for (const [, nd] of layout.nodes) {
-    const l = nd.layer || "Other";
-    if (nd._isChild) continue;
-    if (!ext[l]) ext[l] = { minY: Infinity, maxY: -Infinity };
-    ext[l].minY = Math.min(ext[l].minY, nd.y - nd.height / 2);
-    ext[l].maxY = Math.max(ext[l].maxY, nd.y + nd.height / 2);
-  }
-  for (const [layer, e] of Object.entries(ext)) {
-    const c = LAYER_COLORS[layer] || LAYER_COLORS.Other;
-    const pad = 20, by = e.minY - pad - LAYER_LABEL_PAD, bh = e.maxY - e.minY + pad * 2 + LAYER_LABEL_PAD;
-    parentG.appendChild(svgEl("rect", { x: 0, y: by, width: svgWidth, height: bh, fill: c.fill, opacity: "0.18", rx: "4" }));
-    // The dark text color is unreadable on a dark band, so dark mode labels in the brighter stroke color
-    const lbl = svgEl("text", { x: 14, y: by + 18, class: "aam-layer-label", fill: darkMode ? c.stroke : c.text });
-    lbl.textContent = `${layer} Layer`;
-    parentG.appendChild(lbl);
+// One band per role row of a layer (actors, services, processes; services and interfaces, applications and data;
+// technology services, infrastructure), a faint tint of the layer's hue with its label at the top left. The labels go
+// in labelsG, drawn above the lines: each over a halo in its band's colour, so a line passing it breaks around the text
+function drawLayerBands(parentG: SVGGElement, labelsG: SVGGElement, layout: LayeredLayout, theme: DiagramTheme): void {
+  for (const band of layout.bands) {
+    const c = LAYER_COLORS[band.layer] || LAYER_COLORS.Other;
+    const tint = mixOver(c.stroke, theme.bg, theme.dark ? 0.09 : 0.07);
+    parentG.appendChild(svgEl("rect", {
+      x: 12, y: band.y0, width: layout.width - 24, height: band.y1 - band.y0, fill: tint, rx: "3", class: "aam-band",
+    }));
+    if (!band.label) continue;
+    // Opaque (the label itself is faded), in the band's colour; an inline style wins over the label rules in exports too
+    const halo = svgEl("text", {
+      x: 22, y: band.y0 + 15, class: "aam-layer-halo", fill: tint, stroke: tint, "stroke-width": "6",
+      "stroke-linejoin": "round", "aria-hidden": "true", style: "opacity: 1",
+    });
+    halo.textContent = band.label;
+    const lbl = svgEl("text", { x: 22, y: band.y0 + 15, class: "aam-layer-label", "data-layer": band.layer, fill: theme.dark ? c.stroke : c.text });
+    lbl.textContent = band.label;
+    labelsG.append(halo, lbl);
   }
 }
 
-function drawNode(parentG: SVGGElement, nd: NodePos, el: ArchiElement, _darkMode: boolean): void {
+// The fold marker of a container: a small square with "-" (fold) or "+" (unfold), handled in render(); a button for
+// the keyboard too (Tab to it, Enter or Space)
+function foldMarker(id: string, name: string, x: number, y: number, folded: boolean, theme: DiagramTheme): SVGGElement {
+  const g = svgEl("g", {
+    class: "aam-fold", "data-fold": id, transform: `translate(${x}, ${y})`,
+    role: "button", tabindex: "0", "aria-label": `${folded ? "Unfold" : "Fold"} ${name}`.trim(),
+  });
+  g.appendChild(svgEl("rect", { width: 12, height: 12, rx: 2, fill: theme.bg, stroke: theme.edge, "stroke-width": "1" }));
+  g.appendChild(svgEl("path", { d: folded ? "M3 6h6M6 3v6" : "M3 6h6", stroke: theme.text, "stroke-width": "1.4" }));
+  const title = svgEl("title");
+  title.textContent = folded ? "Unfold" : "Fold";
+  g.appendChild(title);
+  return g;
+}
+
+function drawNode(parentG: SVGGElement, nd: PlacedNode, el: ArchiElement, theme: DiagramTheme): void {
   const c = LAYER_COLORS[el.layer ?? "Other"] ?? LAYER_COLORS.Other;
+  // Ink: a ring in the layer's ArchiMate hue over 38% of it on the canvas, text in the theme's text colour
+  const ink = inkColors(c.stroke, theme.bg);
   const x = nd.x - NODE_WIDTH / 2, y = nd.y - NODE_HEIGHT / 2;
   const rx = nodeRx(el.type ?? "");
 
   const group = svgEl("g", { class: `aam-node ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
 
+  if (nd.collapsed) {
+    // Folded: a second outline behind, as a stack of what it holds
+    group.appendChild(svgEl("rect", { x: 4, y: 4, width: NODE_WIDTH, height: NODE_HEIGHT, rx, fill: ink.fill, stroke: ink.stroke, "stroke-width": "1.5", opacity: "0.6" }));
+  }
   group.appendChild(svgEl("rect", {
     width: NODE_WIDTH, height: NODE_HEIGHT, rx,
-    fill: c.fill, stroke: c.stroke, "stroke-width": "1.5", class: "aam-node-rect",
+    fill: ink.fill, stroke: ink.stroke, "stroke-width": "2", class: "aam-node-rect",
   }));
+  if (nd.collapsed) {
+    group.appendChild(foldMarker(el.id, String(el.name ?? ""), 5, 5, true, theme));
+    const count = svgEl("text", { x: NODE_WIDTH - 6, y: NODE_HEIGHT - 6, "text-anchor": "end", class: "aam-node-type", fill: theme.text, opacity: "0.7" });
+    count.textContent = `+${nd.hidden}`;
+    group.appendChild(count);
+  }
 
   // ArchiMate icon (top-right)
   const iconFn = iconFor(el.type ?? "");
   if (iconFn) {
-    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${NODE_WIDTH - 20}, 2)`, color: c.text, opacity: "0.7" });
+    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${NODE_WIDTH - 20}, 2)`, color: theme.text, opacity: "0.7" });
     iconFn(iconG);
     group.appendChild(iconG);
   }
@@ -1138,7 +772,7 @@ function drawNode(parentG: SVGGElement, nd: NodePos, el: ArchiElement, _darkMode
   const text = svgEl("text", {
     x: NODE_WIDTH / 2, y: NODE_HEIGHT / 2 + 1,
     "text-anchor": "middle", "dominant-baseline": "middle",
-    class: "aam-node-label", fill: c.text,
+    class: "aam-node-label", fill: theme.text,
   });
   text.textContent = truncate(el.name, 22);
   group.appendChild(text);
@@ -1146,14 +780,14 @@ function drawNode(parentG: SVGGElement, nd: NodePos, el: ArchiElement, _darkMode
   // Type sublabel
   const sub = svgEl("text", {
     x: NODE_WIDTH / 2, y: NODE_HEIGHT - 8,
-    "text-anchor": "middle", class: "aam-node-type", fill: c.text, opacity: "0.6",
+    "text-anchor": "middle", class: "aam-node-type", fill: theme.text, opacity: "0.6",
   });
   sub.textContent = formatType(el.type);
   group.appendChild(sub);
 
   const badge = badgeText(el);
   if (badge) {
-    const b = svgEl("text", { x: 6, y: 10, class: "aam-node-badge", fill: c.text });
+    const b = svgEl("text", { x: 6, y: 10, class: "aam-node-badge", fill: theme.text });
     b.textContent = badge;
     group.appendChild(b);
   }
@@ -1165,8 +799,8 @@ function drawNode(parentG: SVGGElement, nd: NodePos, el: ArchiElement, _darkMode
 }
 
 // A junction is a small dot, filled for And and hollow for Or
-function drawJunction(parentG: SVGGElement, nd: NodePos, el: ArchiElement, darkMode: boolean): void {
-  const color = darkMode ? "#d1d5db" : "#333333";
+function drawJunction(parentG: SVGGElement, nd: PlacedNode, el: ArchiElement, theme: DiagramTheme): void {
+  const color = theme.text;
   const group = svgEl("g", { class: `aam-node aam-junction ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${nd.x}, ${nd.y})` });
   const or = el.type === "OrJunction";
   group.appendChild(svgEl("circle", {
@@ -1178,35 +812,38 @@ function drawJunction(parentG: SVGGElement, nd: NodePos, el: ArchiElement, darkM
   parentG.appendChild(group);
 }
 
-function drawContainerNode(parentG: SVGGElement, nd: NodePos, el: ArchiElement, _darkMode: boolean): void {
+function drawContainerNode(parentG: SVGGElement, nd: PlacedNode, el: ArchiElement, theme: DiagramTheme): void {
   const c = LAYER_COLORS[el.layer ?? "Other"] ?? LAYER_COLORS.Other;
+  // A container is a lighter ink (its children carry the 38% fill); its header a little stronger
+  const body = mixOver(c.stroke, theme.bg, 0.14), head = mixOver(c.stroke, theme.bg, 0.3);
   const w = nd.width, h = nd.height, x = nd.x - w / 2, y = nd.y - h / 2;
   const rx = nodeRx(el.type ?? "");
 
   const group = svgEl("g", { class: `aam-node aam-container ${statusClass(el.status)}`.trim(), "data-id": el.id, transform: `translate(${x}, ${y})` });
 
   group.appendChild(svgEl("rect", {
-    width: w, height: h, rx, fill: c.fill, stroke: c.stroke, "stroke-width": "1.5", opacity: "0.5", class: "aam-node-rect",
+    width: w, height: h, rx, fill: body, stroke: c.stroke, "stroke-width": "2", class: "aam-node-rect",
   }));
   // Header (a status that recolors the body recolors the header too, see DIAGRAM_CSS)
-  group.appendChild(svgEl("rect", { width: w, height: CONTAINER_PAD_TOP - 2, rx, fill: c.stroke, opacity: "0.2", class: "aam-node-header" }));
-  group.appendChild(svgEl("rect", { x: 0, y: Math.min(rx, CONTAINER_PAD_TOP - 2), width: w, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: c.stroke, opacity: "0.2", class: "aam-node-header" }));
+  group.appendChild(svgEl("rect", { x: 1, y: 1, width: w - 2, height: CONTAINER_PAD_TOP - 3, rx, fill: head, class: "aam-node-header" }));
+  group.appendChild(svgEl("rect", { x: 1, y: Math.min(rx, CONTAINER_PAD_TOP - 3), width: w - 2, height: Math.max(0, CONTAINER_PAD_TOP - 2 - rx), fill: head, class: "aam-node-header" }));
 
-  const text = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP / 2 + 1, "dominant-baseline": "middle", class: "aam-node-label", fill: c.text, "font-size": "11" });
+  group.appendChild(foldMarker(el.id, String(el.name ?? ""), 6, (CONTAINER_PAD_TOP - 12) / 2, false, theme));
+  const text = svgEl("text", { x: 24, y: CONTAINER_PAD_TOP / 2 + 1, "dominant-baseline": "middle", class: "aam-node-label", fill: theme.text, "font-size": "11" });
   text.textContent = truncate(el.name, 30);
   group.appendChild(text);
 
   // Icon
   const iconFn = iconFor(el.type ?? "");
   if (iconFn) {
-    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${w - 20}, 3)`, color: c.text, opacity: "0.7" });
+    const iconG = svgEl("g", { class: "aam-node-icon", transform: `translate(${w - 20}, 3)`, color: theme.text, opacity: "0.7" });
     iconFn(iconG);
     group.appendChild(iconG);
   }
 
   const badge = badgeText(el);
   if (badge) {
-    const b = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP + 10, class: "aam-node-badge", fill: c.text });
+    const b = svgEl("text", { x: 8, y: CONTAINER_PAD_TOP + 10, class: "aam-node-badge", fill: theme.text });
     b.textContent = badge;
     group.appendChild(b);
   }
@@ -1217,26 +854,43 @@ function drawContainerNode(parentG: SVGGElement, nd: NodePos, el: ArchiElement, 
   parentG.appendChild(group);
 }
 
-function drawEdge(parentG: SVGGElement, edgeData: EdgeInfo, darkMode: boolean): void {
+function drawEdge(parentG: SVGGElement, edgeData: RoutedEdge, theme: DiagramTheme, nameOf: (id: string) => string, chain: string[] = []): void {
   const pts = edgeData.points || [];
   if (pts.length < 2) return;
 
   const rel = edgeData.relationship || {};
   const style = REL_STYLES[rel.type ?? ""] ?? REL_STYLES.Serving;
-  const strokeColor = darkMode ? "#aaa" : "#666";
+  const strokeColor = theme.edge;
 
   let d = `M ${pts[0].x} ${pts[0].y}`;
   for (let i = 1; i < pts.length; i++) d += ` L ${pts[i].x} ${pts[i].y}`;
 
-  const path = svgEl("path", { d, fill: "none", stroke: strokeColor, "stroke-width": "1.3", class: `aam-edge ${statusClass(rel.status)}`.trim() });
+  // The drawn ends (a container when lifted or shared), so a line can follow its elements (hover, selection)
+  const path = svgEl("path", {
+    d, fill: "none", stroke: strokeColor, "stroke-width": "1.3", class: `aam-edge ${statusClass(rel.status)}`.trim(),
+    "data-source": edgeData.source, "data-target": edgeData.target, "data-chain": chain.join(" "),
+  });
   if (style.dash) path.setAttribute("stroke-dasharray", style.dash);
   if (style.srcMarker) path.setAttribute("marker-start", `url(#${markerId(style.srcMarker, rel.status)})`);
   if (style.tgtMarker) path.setAttribute("marker-end", `url(#${markerId(style.tgtMarker, rel.status)})`);
 
+  const members = edgeData.members ?? [rel];
+  if (members.length < 2) {
+    const title = svgEl("title");
+    title.textContent = `${rel.type}${rel.name ? ": " + rel.name : ""}`;
+    path.appendChild(title);
+    parentG.appendChild(path);
+    return;
+  }
+  // Shared (several relationships drawn once): a little heavier, the relationships listed, a wider hover target
+  path.setAttribute("stroke-width", "1.9");
+  const group = svgEl("g", { class: "aam-edge-shared", "data-ends": [...new Set(members.flatMap((m) => [m.source, m.target]))].join(" ") });
   const title = svgEl("title");
-  title.textContent = `${rel.type}${rel.name ? ": " + rel.name : ""}`;
-  path.appendChild(title);
-  parentG.appendChild(path);
+  title.textContent = `${members.length} ${rel.type} relationships\n` + members.map((m) => `${nameOf(m.source)} \u2192 ${nameOf(m.target)}`).join("\n");
+  group.appendChild(title);
+  group.appendChild(path);
+  group.appendChild(svgEl("path", { d, fill: "none", stroke: "transparent", "stroke-width": "10", class: "aam-edge-hit" }));
+  parentG.appendChild(group);
 }
 
 // ============================================================================
@@ -1283,9 +937,9 @@ function downloadBlob(blob: Blob, filename: string): void {
 
 function truncate(s: string | null | undefined, n: number): string { return !s ? "" : s.length > n ? s.slice(0, n - 1) + "\u2026" : s; }
 
+// A type's name without its layer prefix (names.ts)
 function formatType(type: string | null | undefined): string {
-  return String(type ?? "").replace("Application", "App ").replace("Business", "Biz ").replace("Technology", "Tech ")
-    .replace("System", "Sys ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
+  return typeName(type);
 }
 
 function getTypeBadge(type: string): string {
@@ -1357,40 +1011,84 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
 
   const toolbar = document.createElement("div");
   toolbar.className = "aam-toolbar";
+  // Icon buttons like the graph and vector widgets (fixed markup; the icons are constants); SVG and PNG in one menu
   toolbar.innerHTML = `
-    <button class="aam-btn aam-btn-filter" title="Toggle filter panel">&#9776;</button>
+    <button class="aam-btn aam-btn-icon aam-btn-filter" title="Filter" aria-label="Filter">${ICONS.sidebar}</button>
     <span class="aam-title">ArchiMate Model</span>
     <span class="aam-legend"></span>
     <input type="file" class="aam-file-input" accept=".xml,.archimate" style="display:none">
-    <button class="aam-btn aam-btn-upload" title="Upload .xml or .archimate file">Upload</button>
-    <button class="aam-btn aam-btn-export-svg" title="Export as SVG">SVG</button>
-    <button class="aam-btn aam-btn-export-png" title="Export as PNG">PNG</button>
-    <button class="aam-btn aam-btn-fit" title="Fit to view">Fit</button>
-    <button class="aam-btn aam-btn-dark" title="Toggle dark mode">&#9681;</button>
+    <button class="aam-btn aam-btn-icon aam-btn-upload" title="Open an .xml or .archimate file" aria-label="Open a model file">${ICONS.upload}</button>
+    <span class="aam-export">
+      <button class="aam-btn aam-btn-icon aam-btn-export" title="Export" aria-label="Export" aria-haspopup="menu">${ICONS.download}</button>
+      <span class="aam-export-menu" role="menu" hidden>
+        <button class="aam-menu-item aam-btn-export-svg" role="menuitem">SVG</button>
+        <button class="aam-menu-item aam-btn-export-png" role="menuitem">PNG, 2x</button>
+      </span>
+    </span>
+    <button class="aam-btn aam-btn-icon aam-btn-fit" title="Fit the whole model" aria-label="Fit the whole model">${ICONS.zoomFit}</button>
+    <button class="aam-btn aam-btn-icon aam-btn-dark" title="Light or dark" aria-label="Light or dark"></button>
   `;
+  // The theme button shows the theme it switches to
+  const darkBtn = qs<HTMLElement>(toolbar, ".aam-btn-dark");
+  const showThemeIcon = () => { darkBtn.innerHTML = model.get("dark_mode") ? ICONS.sun : ICONS.moon; };
+  showThemeIcon();
+  // The export menu opens under its button and closes on a choice or a click elsewhere
+  const exportMenu = qs<HTMLElement>(toolbar, ".aam-export-menu");
+  qs(toolbar, ".aam-btn-export").addEventListener("click", (e) => { e.stopPropagation(); exportMenu.hidden = !exportMenu.hidden; });
+  exportMenu.addEventListener("click", () => { exportMenu.hidden = true; });
+  const closeExportMenu = () => { exportMenu.hidden = true; };
+  document.addEventListener("click", closeExportMenu);
   wrapper.appendChild(toolbar);
 
   const contentArea = document.createElement("div");
   contentArea.className = "aam-content";
   wrapper.appendChild(contentArea);
 
-  let hiddenLayers = new Set(), hiddenElemTypes = new Set(), hiddenRelTypes = new Set(), nestElements = true;
+  let hiddenLayers = new Set(), hiddenElemTypes = new Set(), hiddenRelTypes = new Set(), nestElements = true, nestRelations = true;
+  // Containers folded to one box (their relationships attach to it); kept until unfolded
+  const folded = new Set<string>();
 
-  const filterPanel = buildFilterPanel(model, (l, e, r, n) => {
-    hiddenLayers = l; hiddenElemTypes = e; hiddenRelTypes = r; nestElements = n; rebuildDiagram();
+  const filterPanel = buildFilterPanel(model, (l, e, r, n, b) => {
+    hiddenLayers = l; hiddenElemTypes = e; hiddenRelTypes = r; nestElements = n; nestRelations = b; rebuildDiagram();
   });
-  filterPanel.element.classList.add("aam-panel-open");
+  // The filter panel starts open when the widget is wide enough to keep the diagram readable beside it
+  // (decided on the widget's first real size, below: a host may attach it after render)
   contentArea.appendChild(filterPanel.element);
 
   const graphContainer = document.createElement("div");
   graphContainer.className = "aam-graph-container";
   contentArea.appendChild(graphContainer);
-  // The height sizes the row of filter panel and diagram: the diagram stretches to it and a long panel scrolls
-  contentArea.style.height = model.get("height") + "px";
+  // A height given sizes the row of filter panel and diagram (the diagram stretches to it, a long panel scrolls);
+  // without one the widget takes the shared rule (size.ts) and the row fills it
+  function applySize() {
+    const height = Number(model.get("height")) || 0;
+    for (const name of ["aspectRatio", "minHeight", "maxHeight", "height"] as const) wrapper.style[name] = "";
+    if (height > 0) {
+      contentArea.style.height = height + "px";
+      wrapper.classList.remove("aam-sized");
+    } else {
+      contentArea.style.height = "";
+      const { aspectRatio, minHeight, maxHeight } = wrapperSize(0, 0);
+      Object.assign(wrapper.style, { aspectRatio, minHeight, maxHeight });
+      wrapper.classList.add("aam-sized");
+    }
+  }
+  applySize();
 
+  // Details: a panel beside the diagram that opens on a selection and closes when it clears
   const details = document.createElement("div");
   details.className = "aam-details"; details.style.display = "none";
-  wrapper.appendChild(details);
+  contentArea.appendChild(details);
+  function followSelection() {
+    // The host may select by id alone ({"id": ...}): the details show the model's element of that id
+    const chosen = model.get("selected_element") as ArchiElement | null;
+    const selected = chosen && chosen.id != null
+      ? modelElements(model).find((e) => String(e.id) === String(chosen.id)) ?? chosen
+      : chosen;
+    // show_details false: the host shows the selection itself (undefined, from an older host, shows them)
+    if (selected && model.get("show_details") !== false) showDetails(details, selected, () => { model.set("selected_element", null); model.save_changes(); });
+    else details.style.display = "none";
+  }
 
   function getFilteredData(): { elements: ArchiElement[]; relationships: ArchiRelationship[] } {
     const ae = modelElements(model), ar = (model.get("relationships") ?? []) as ArchiRelationship[];
@@ -1409,7 +1107,8 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
     qs(toolbar, ".aam-legend").replaceChildren(...LAYER_ORDER.filter((l) => present.has(l)).map((layer) => {
       const item = document.createElement("span"); item.className = "aam-legend-item";
       const dot = document.createElement("span"); dot.className = "aam-dot";
-      dot.style.background = LAYER_COLORS[layer].fill; dot.style.borderColor = LAYER_COLORS[layer].stroke;
+      // Drawn like the elements: a ring in the layer hue over 38% of it
+      dot.style.background = `color-mix(in srgb, ${LAYER_COLORS[layer].stroke} 38%, var(--aam-toolbar-bg))`; dot.style.borderColor = LAYER_COLORS[layer].stroke;
       item.append(dot, layer);
       return item;
     }));
@@ -1421,20 +1120,67 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
     wrapper.classList.toggle("aam-dark", dm);
     const { elements, relationships } = getFilteredData();
     const view = graphContainer.querySelector("svg.aam-svg")?.getAttribute("viewBox");
-    const drawn = renderDiagram(graphContainer, elements, relationships, dm, nestElements);
+    const drawn = renderDiagram(graphContainer, elements, relationships, dm, nestElements, folded, nestRelations);
     // A redraw that moves nothing (a theme switch, a status-only update) keeps the zoom and pan; any other refits
-    if (drawn && view && drawn.key === shownKey) drawn.svg.setAttribute("viewBox", view);
+    if (drawn && view && drawn.key === shownKey) {
+      drawn.svg.setAttribute("viewBox", view);
+    } else if (drawn) {
+      // A new or moved diagram opens readable (layout.ts openView); Fit shows the whole of it
+      const [, , w, h] = drawn.fit.split(" ").map(Number);
+      const v = openView(w, h, graphContainer.clientWidth, graphContainer.clientHeight);
+      drawn.svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.width} ${v.height}`);
+    }
     fitView = drawn?.fit ?? null;
     shownKey = drawn?.key ?? null;
 
     const allEls = (model.get("elements") ?? []) as ArchiElement[];
+    // Lines light up for the hovered element and the selected one (their own and their children's)
+    graphContainer.querySelectorAll<HTMLElement>(".aam-node").forEach((node) => {
+      node.addEventListener("mouseenter", () => { hovered = node.dataset.id ?? null; lightLines(); });
+      node.addEventListener("mouseleave", () => { hovered = null; lightLines(); });
+    });
+    lightLines();
+    // Hovering a shared line marks the elements its relationships join
+    graphContainer.querySelectorAll<SVGGElement>(".aam-edge-shared").forEach((line) => {
+      const ends = new Set((line.dataset.ends ?? "").split(" "));
+      const mark = (on: boolean) => graphContainer.querySelectorAll<HTMLElement>(".aam-node").forEach((node) => {
+        node.classList.toggle("aam-member", on && ends.has(node.dataset.id ?? ""));
+      });
+      line.addEventListener("mouseenter", () => mark(true));
+      line.addEventListener("mouseleave", () => mark(false));
+    });
+    graphContainer.querySelectorAll<SVGGElement>(".aam-fold").forEach((marker) => {
+      const toggle = () => {
+        const id = marker.dataset.fold ?? "";
+        if (folded.has(id)) folded.delete(id); else folded.add(id);
+        rebuildDiagram();
+        // The redraw replaces the marker: keep the keyboard on the new one
+        [...graphContainer.querySelectorAll<SVGGElement>(".aam-fold")].find((m) => m.dataset.fold === id)?.focus();
+      };
+      marker.addEventListener("click", (event) => { event.stopPropagation(); toggle(); });
+      marker.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault(); event.stopPropagation(); toggle();
+      });
+    });
     graphContainer.querySelectorAll<HTMLElement>(".aam-node").forEach((node) => {
       node.addEventListener("click", () => {
         const found = allEls.find((e) => e.id === node.dataset.id);
-        if (found) { model.set("selected_element", { ...found }); model.save_changes(); showDetails(details, found); applyMarks(); }
+        if (found) { model.set("selected_element", { ...found }); model.save_changes(); followSelection(); applyMarks(); }
       });
     });
     applyMarks();
+  }
+
+  // The element whose lines are lit while the pointer is on it
+  let hovered: string | null = null;
+  function lightLines() {
+    const selected = model.get("selected_element") as ArchiElement | null;
+    const on = new Set([hovered, selected && selected.id != null ? String(selected.id) : null].filter((v): v is string => Boolean(v)));
+    graphContainer.querySelectorAll<SVGElement>("path.aam-edge").forEach((line) => {
+      const chain = (line.dataset.chain ?? "").split(" ");
+      line.classList.toggle("aam-focus", chain.some((id) => on.has(id)));
+    });
   }
 
   // Outline the selected element (clicked, or set by the host by id) and the host's highlight_ids
@@ -1448,7 +1194,13 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
     });
   }
 
-  qs(toolbar, ".aam-btn-filter").addEventListener("click", () => filterPanel.element.classList.toggle("aam-panel-open"));
+  // A closed filter panel is 0px wide and also inert: out of the Tab order and hidden from screen readers
+  function setFilterOpen(open: boolean) {
+    filterPanel.element.classList.toggle("aam-panel-open", open);
+    filterPanel.element.toggleAttribute("inert", !open);
+  }
+  setFilterOpen(false);
+  qs(toolbar, ".aam-btn-filter").addEventListener("click", () => setFilterOpen(!filterPanel.element.classList.contains("aam-panel-open")));
   qs(toolbar, ".aam-btn-fit").addEventListener("click", () => {
     const s = graphContainer.querySelector("svg.aam-svg");
     if (s && fitView) s.setAttribute("viewBox", fitView);
@@ -1466,41 +1218,41 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
     reader.readAsText(file);
   });
 
-  // Export SVG
-  qs(toolbar, ".aam-btn-export-svg").addEventListener("click", () => {
-    const svg = graphContainer.querySelector("svg");
-    if (!svg) return;
+  // An export is the whole diagram (the fitted view), whatever is zoomed on screen, with its key styles inlined so
+  // the file is self-contained; null when nothing is drawn
+  function exportClone(): { clone: SVGSVGElement; width: number; height: number } | null {
+    const svg = graphContainer.querySelector("svg.aam-svg");
+    if (!svg) return null;
     const clone = svg.cloneNode(true) as SVGSVGElement;
-    // Inline key styles so the SVG is self-contained
     const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
     style.textContent = `
       .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
       .aam-node-type { font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-layer-label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+      .aam-layer-label, .aam-layer-halo { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; }
+      .aam-layer-label { opacity: 0.7; }
     `;
     clone.insertBefore(style, clone.firstChild);
-    // Set explicit dimensions from viewBox
-    const vb = clone.getAttribute("viewBox");
-    if (vb) { const [,,w,h] = vb.split(" "); clone.setAttribute("width", w); clone.setAttribute("height", h); }
-    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
+    const view = fitView ?? clone.getAttribute("viewBox") ?? "0 0 1200 800";
+    clone.setAttribute("viewBox", view);
+    const [, , width, height] = view.split(" ").map(Number);
+    return { clone, width, height };
+  }
+
+  // Export SVG
+  qs(toolbar, ".aam-btn-export-svg").addEventListener("click", () => {
+    const out = exportClone();
+    if (!out) return;
+    out.clone.setAttribute("width", String(out.width)); out.clone.setAttribute("height", String(out.height));
+    const blob = new Blob([new XMLSerializer().serializeToString(out.clone)], { type: "image/svg+xml" });
     downloadBlob(blob, "archimate-diagram.svg");
   });
 
-  // Export PNG
+  // Export PNG (at twice the diagram's size)
   qs(toolbar, ".aam-btn-export-png").addEventListener("click", () => {
-    const svg = graphContainer.querySelector("svg");
-    if (!svg) return;
-    const clone = svg.cloneNode(true) as SVGSVGElement;
-    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
-    style.textContent = `
-      .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-node-type { font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-layer-label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
-    `;
-    clone.insertBefore(style, clone.firstChild);
-    const vb = clone.getAttribute("viewBox");
-    let w = 1200, h = 800;
-    if (vb) { const parts = vb.split(" "); w = Math.ceil(Number(parts[2]) * 2); h = Math.ceil(Number(parts[3]) * 2); }
+    const out = exportClone();
+    if (!out) return;
+    const { clone } = out;
+    const w = Math.ceil(out.width * 2), h = Math.ceil(out.height * 2);
     clone.setAttribute("width", String(w)); clone.setAttribute("height", String(h));
     const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);
@@ -1513,7 +1265,7 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
         URL.revokeObjectURL(url);
         return;
       }
-      ctx.fillStyle = model.get("dark_mode") ? "#1e1e3a" : "#fdfdfd";
+      ctx.fillStyle = diagramTheme(graphContainer, Boolean(model.get("dark_mode"))).bg;
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(url);
@@ -1529,27 +1281,55 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
     ["change:dark_mode", rebuildDiagram],
     ["change:dark_mode", onDarkModeChange],
     ["change:selected_element", applyMarks],
+    ["change:selected_element", followSelection],
+    ["change:show_details", followSelection],
+    ["change:selected_element", () => lightLines()],
+    ["change:dark_mode", showThemeIcon],
     ["change:highlight_ids", applyMarks],
-    ["change:height", () => { contentArea.style.height = model.get("height") + "px"; rebuildDiagram(); }],
+    ["change:height", () => { applySize(); rebuildDiagram(); }],
   ];
   for (const [event, fn] of listeners) model.on(event, fn);
   rebuildDiagram();
+  // A selection the host made before the widget was shown opens its details as well
+  followSelection();
+
+  // The first real size decides the opening: the filter panel opens in a wide widget, and the diagram takes its
+  // readable opening view. Now, or when the host attaches the widget later (then a ResizeObserver reports it).
+  let opened = false;
+  function openOnce(): boolean {
+    if (opened || !wrapper.clientWidth) return opened;
+    opened = true;
+    if (wrapper.clientWidth >= 900) setFilterOpen(true);
+    const svg = graphContainer.querySelector("svg.aam-svg");
+    if (svg && fitView && svg.getAttribute("viewBox") === fitView) {
+      const [, , w, h] = fitView.split(" ").map(Number);
+      const v = openView(w, h, graphContainer.clientWidth, graphContainer.clientHeight);
+      svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.width} ${v.height}`);
+    }
+    return true;
+  }
+  const sizeWatch = !openOnce() && typeof ResizeObserver !== "undefined"
+    ? new ResizeObserver(() => { if (openOnce()) sizeWatch?.disconnect(); })
+    : null;
+  sizeWatch?.observe(wrapper);
 
   // Once the host removes the widget, stop listening to the model and following the page theme
   return () => {
     for (const [event, fn] of listeners) model.off(event, fn);
+    document.removeEventListener("click", closeExportMenu);
     filterPanel.dispose();
     themeObserver.disconnect();
+    sizeWatch?.disconnect();
     rootObserver.disconnect();
     colorScheme?.removeEventListener("change", syncTheme);
   };
 }
 
-function showDetails(container: HTMLElement, el: ArchiElement): void {
+function showDetails(container: HTMLElement, el: ArchiElement, onClose: () => void): void {
   container.style.display = "block";
   // Fixed markup only: model values go in as text, so markup in a name or documentation stays inert
   container.innerHTML = `
-    <div class="aam-details-header"><strong></strong><button class="aam-btn aam-details-close">&times;</button></div>
+    <div class="aam-details-header"><strong></strong><button class="aam-btn aam-btn-icon aam-details-close" title="Close" aria-label="Close">${ICONS.close}</button></div>
     <div class="aam-details-body"></div>`;
   qs(container, ".aam-details-header strong").textContent = el.name ?? "";
   const body = qs(container, ".aam-details-body");
@@ -1567,7 +1347,7 @@ function showDetails(container: HTMLElement, el: ArchiElement): void {
     const doc = document.createElement("div"); doc.className = "aam-detail-doc"; doc.textContent = el.documentation;
     body.appendChild(doc);
   }
-  qs(container, ".aam-details-close").addEventListener("click", () => { container.style.display = "none"; });
+  qs(container, ".aam-details-close").addEventListener("click", () => { container.style.display = "none"; onClose(); });
 }
 
 export default { render };

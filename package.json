@@ -7,7 +7,8 @@
     "build": "node scripts/build-esm.mjs",
     "check": "node scripts/build-esm.mjs --check",
     "typecheck": "tsc --noEmit",
-    "test": "uv run pytest tests/test_ui.py -k test_javascript"
+    "test": "uv run pytest tests/test_ui.py -k test_javascript",
+    "sync-tokens": "node scripts/sync-design-tokens.mjs"
   },
   "engines": {
     "node": ">=22.18"
