@@ -10,7 +10,7 @@ Layered view release: the diagram is laid out as an architect's layered view, wi
 - **Folding**: the "−" on a container's header folds it into one box that shows how many elements it holds; its relationships attach to the box, one line per type and element. The "+" unfolds it.
 - **Nest relationships**: a relationship that more than half of a container's children share (same type, same element at the other end) is drawn once, at the container; hovering it marks the elements it stands for and lists the relationships. The "Nest relationships" box under "Nest elements" turns this off.
 - **Quiet lines**: relationship lines are drawn faint until their element is hovered or selected; then its lines, and those of the elements inside it, show at full strength. SVG and PNG exports draw every line in full.
-- **Readable on open**: a model too large to read when fitted opens at a readable scale from the top; "Fit" shows the whole model. SVG and PNG exports are always the whole model, whatever the zoom on screen.
+- **Readable on open**: a model too large to read when fitted opens at a readable scale from the top; "Fit" shows the whole model. SVG and PNG exports are always the whole diagram as filtered, whatever the zoom on screen.
 - **Details panel**: the selected element's details open in a panel beside the diagram, also for a selection the host makes (by id alone, or before the widget is shown), and close when the selection clears. A host that shows the selection itself passes `show_details=False`.
 - **Keyboard focus**: buttons, menus, checkboxes and fold markers show a focus ring; a fold marker folds and unfolds with Enter or Space.
 

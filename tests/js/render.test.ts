@@ -910,6 +910,7 @@ test("a filter row is a label: clicking its name toggles it, and the name is the
     assert.equal(row.tagName, "LABEL");
     const box = q<HTMLInputElement>(row, "input");
     assert.equal(box.labels?.[0], row, "the row labels its checkbox");
+    assert.equal(box.getAttribute("aria-label"), "Technology Layer", "named by the name alone, without the count");
     q<HTMLElement>(row, ".aam-filter-name").click();
     assert.equal(box.checked, false, "the name toggles the checkbox");
     assert.ok(!el.querySelector('.aam-node[data-id="t1"]'), "and the layer is hidden");

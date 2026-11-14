@@ -331,7 +331,7 @@
   gap: 6px;
   padding: 3px 12px;
   font-size: 12px;
-  cursor: default;
+  cursor: pointer;
   transition: opacity 0.15s;
 }
 

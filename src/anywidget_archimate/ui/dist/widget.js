@@ -1292,6 +1292,7 @@ function createCheckboxItem({ name, count, color, borderColor, badge, sample, is
   cb.type = "checkbox";
   cb.checked = !isHidden;
   cb.className = "aam-filter-checkbox";
+  cb.setAttribute("aria-label", name);
   cb.addEventListener("change", () => {
     item.classList.toggle("aam-filter-hidden", !cb.checked);
     onToggle(cb.checked);

@@ -575,6 +575,8 @@ function createCheckboxItem({ name, count, color, borderColor, badge, sample, is
   item.className = "aam-filter-item" + (isHidden ? " aam-filter-hidden" : "");
   const cb = document.createElement("input");
   cb.type = "checkbox"; cb.checked = !isHidden; cb.className = "aam-filter-checkbox";
+  // The name alone, not the badge and count the row also holds
+  cb.setAttribute("aria-label", name);
   cb.addEventListener("change", () => { item.classList.toggle("aam-filter-hidden", !cb.checked); onToggle(cb.checked); });
   item.appendChild(cb);
   const sw = document.createElement("span");
