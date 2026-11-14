@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-11-14
 
 Layered view release: the diagram is laid out as an architect's layered view, with role bands per layer, nesting, quiet lines and folding containers, and the widget takes the look of the anywidgets family. Assignment and realization within a layer now draw as nesting (as composition and aggregation did), which the "Nest elements" box still turns off; with `height` 0 (the new default) the widget fills its cell at 16:10, and a height in pixels sets the diagram row as before.
 
