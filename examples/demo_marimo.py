@@ -8,8 +8,9 @@ app = marimo.App(width="full")
 def _():
     from anywidget_archimate import ArchiMate
 
-    widget = ArchiMate.from_xml(r"H:\Deriva\deriva\reference\reference_bigdata.archimate", height=800)
-    widget
+    # The path of an Archi model file (.archimate)
+    widget = ArchiMate.from_xml("model.archimate", height=800)
+    widget  # noqa: B018  (the cell's output)
     return (widget,)
 
 
