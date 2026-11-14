@@ -569,8 +569,9 @@ function createCheckboxItem({ name, count, color, borderColor, badge, sample, is
   sample?: string;
   isHidden: boolean;
   onToggle: (checked: boolean) => void;
-}): HTMLDivElement {
-  const item = document.createElement("div");
+}): HTMLLabelElement {
+  // A label around the checkbox: the whole row toggles it, and the name is the checkbox's accessible name
+  const item = document.createElement("label");
   item.className = "aam-filter-item" + (isHidden ? " aam-filter-hidden" : "");
   const cb = document.createElement("input");
   cb.type = "checkbox"; cb.checked = !isHidden; cb.className = "aam-filter-checkbox";
@@ -642,7 +643,8 @@ function renderDiagram(
   svg.appendChild(mainG);
 
   const theme = diagramTheme(container, darkMode);
-  drawLayerBands(mainG, layout, theme);
+  const labelsG = svgEl("g", { class: "aam-band-labels" });
+  drawLayerBands(mainG, labelsG, layout, theme);
 
   // Containers behind everything, outer ones first
   const byId = new Map(elements.map((e) => [e.id, e]));
@@ -671,6 +673,9 @@ function renderDiagram(
     drawEdge(edgesG, edge, theme, nameOf, [...new Set([...chainOf(edge.source), ...chainOf(edge.target), ...ends])]);
   }
 
+  // Band labels above the lines (they sit in the band's top padding, clear of every element)
+  mainG.appendChild(labelsG);
+
   // Leaf nodes
   const nodesG = svgEl("g", { class: "aam-nodes" });
   mainG.appendChild(nodesG);
@@ -692,18 +697,25 @@ function layoutKey(layout: LayeredLayout): string {
 }
 
 // One band per role row of a layer (actors, services, processes; services and interfaces, applications and data;
-// technology services, infrastructure), a faint tint of the layer's hue with its label at the top left
-function drawLayerBands(parentG: SVGGElement, layout: LayeredLayout, theme: DiagramTheme): void {
+// technology services, infrastructure), a faint tint of the layer's hue with its label at the top left. The labels go
+// in labelsG, drawn above the lines: each over a halo in its band's colour, so a line passing it breaks around the text
+function drawLayerBands(parentG: SVGGElement, labelsG: SVGGElement, layout: LayeredLayout, theme: DiagramTheme): void {
   for (const band of layout.bands) {
     const c = LAYER_COLORS[band.layer] || LAYER_COLORS.Other;
+    const tint = mixOver(c.stroke, theme.bg, theme.dark ? 0.09 : 0.07);
     parentG.appendChild(svgEl("rect", {
-      x: 12, y: band.y0, width: layout.width - 24, height: band.y1 - band.y0,
-      fill: mixOver(c.stroke, theme.bg, theme.dark ? 0.09 : 0.07), rx: "3", class: "aam-band",
+      x: 12, y: band.y0, width: layout.width - 24, height: band.y1 - band.y0, fill: tint, rx: "3", class: "aam-band",
     }));
     if (!band.label) continue;
+    // Opaque (the label itself is faded), in the band's colour; an inline style wins over the label rules in exports too
+    const halo = svgEl("text", {
+      x: 22, y: band.y0 + 15, class: "aam-layer-halo", fill: tint, stroke: tint, "stroke-width": "6",
+      "stroke-linejoin": "round", "aria-hidden": "true", style: "opacity: 1",
+    });
+    halo.textContent = band.label;
     const lbl = svgEl("text", { x: 22, y: band.y0 + 15, class: "aam-layer-label", "data-layer": band.layer, fill: theme.dark ? c.stroke : c.text });
     lbl.textContent = band.label;
-    parentG.appendChild(lbl);
+    labelsG.append(halo, lbl);
   }
 }
 
@@ -1198,41 +1210,41 @@ function render({ model, el }: { model: WidgetModel; el: HTMLElement }): () => v
     reader.readAsText(file);
   });
 
-  // Export SVG
-  qs(toolbar, ".aam-btn-export-svg").addEventListener("click", () => {
-    const svg = graphContainer.querySelector("svg");
-    if (!svg) return;
+  // An export is the whole diagram (the fitted view), whatever is zoomed on screen, with its key styles inlined so
+  // the file is self-contained; null when nothing is drawn
+  function exportClone(): { clone: SVGSVGElement; width: number; height: number } | null {
+    const svg = graphContainer.querySelector("svg.aam-svg");
+    if (!svg) return null;
     const clone = svg.cloneNode(true) as SVGSVGElement;
-    // Inline key styles so the SVG is self-contained
     const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
     style.textContent = `
       .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
       .aam-node-type { font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-layer-label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+      .aam-layer-label, .aam-layer-halo { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; }
+      .aam-layer-label { opacity: 0.7; }
     `;
     clone.insertBefore(style, clone.firstChild);
-    // Set explicit dimensions from viewBox
-    const vb = clone.getAttribute("viewBox");
-    if (vb) { const [,,w,h] = vb.split(" "); clone.setAttribute("width", w); clone.setAttribute("height", h); }
-    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
+    const view = fitView ?? clone.getAttribute("viewBox") ?? "0 0 1200 800";
+    clone.setAttribute("viewBox", view);
+    const [, , width, height] = view.split(" ").map(Number);
+    return { clone, width, height };
+  }
+
+  // Export SVG
+  qs(toolbar, ".aam-btn-export-svg").addEventListener("click", () => {
+    const out = exportClone();
+    if (!out) return;
+    out.clone.setAttribute("width", String(out.width)); out.clone.setAttribute("height", String(out.height));
+    const blob = new Blob([new XMLSerializer().serializeToString(out.clone)], { type: "image/svg+xml" });
     downloadBlob(blob, "archimate-diagram.svg");
   });
 
-  // Export PNG
+  // Export PNG (at twice the diagram's size)
   qs(toolbar, ".aam-btn-export-png").addEventListener("click", () => {
-    const svg = graphContainer.querySelector("svg");
-    if (!svg) return;
-    const clone = svg.cloneNode(true) as SVGSVGElement;
-    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
-    style.textContent = `
-      .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-node-type { font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-layer-label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
-    `;
-    clone.insertBefore(style, clone.firstChild);
-    const vb = clone.getAttribute("viewBox");
-    let w = 1200, h = 800;
-    if (vb) { const parts = vb.split(" "); w = Math.ceil(Number(parts[2]) * 2); h = Math.ceil(Number(parts[3]) * 2); }
+    const out = exportClone();
+    if (!out) return;
+    const { clone } = out;
+    const w = Math.ceil(out.width * 2), h = Math.ceil(out.height * 2);
     clone.setAttribute("width", String(w)); clone.setAttribute("height", String(h));
     const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
     const url = URL.createObjectURL(blob);

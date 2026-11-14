@@ -1286,7 +1286,7 @@ function addToggleLinks(header, allKeys, hiddenSet, callback) {
   header.appendChild(links);
 }
 function createCheckboxItem({ name, count, color, borderColor, badge, sample, isHidden, onToggle }) {
-  const item = document.createElement("div");
+  const item = document.createElement("label");
   item.className = "aam-filter-item" + (isHidden ? " aam-filter-hidden" : "");
   const cb = document.createElement("input");
   cb.type = "checkbox";
@@ -1351,7 +1351,8 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
   const mainG = svgEl("g", { class: "aam-main" });
   svg2.appendChild(mainG);
   const theme = diagramTheme(container, darkMode);
-  drawLayerBands(mainG, layout, theme);
+  const labelsG = svgEl("g", { class: "aam-band-labels" });
+  drawLayerBands(mainG, labelsG, layout, theme);
   const byId = new Map(elements.map((e) => [e.id, e]));
   const containersG = svgEl("g", { class: "aam-containers" });
   mainG.appendChild(containersG);
@@ -1372,6 +1373,7 @@ function renderDiagram(container, elements, relationships, darkMode, nestElement
     const ends = edge.members.flatMap((r) => [String(r.source), String(r.target)]);
     drawEdge(edgesG, edge, theme, nameOf, [.../* @__PURE__ */ new Set([...chainOf(edge.source), ...chainOf(edge.target), ...ends])]);
   }
+  mainG.appendChild(labelsG);
   const nodesG = svgEl("g", { class: "aam-nodes" });
   mainG.appendChild(nodesG);
   for (const [id, nd] of layout.nodes) {
@@ -1386,22 +1388,35 @@ function layoutKey(layout) {
   const boxes = [...layout.nodes].map(([id, nd]) => `${id}:${nd.x},${nd.y},${nd.width},${nd.height}`);
   return `${layout.width}x${layout.height};${boxes.join(";")}`;
 }
-function drawLayerBands(parentG, layout, theme) {
+function drawLayerBands(parentG, labelsG, layout, theme) {
   for (const band of layout.bands) {
     const c = LAYER_COLORS[band.layer] || LAYER_COLORS.Other;
+    const tint = mixOver(c.stroke, theme.bg, theme.dark ? 0.09 : 0.07);
     parentG.appendChild(svgEl("rect", {
       x: 12,
       y: band.y0,
       width: layout.width - 24,
       height: band.y1 - band.y0,
-      fill: mixOver(c.stroke, theme.bg, theme.dark ? 0.09 : 0.07),
+      fill: tint,
       rx: "3",
       class: "aam-band"
     }));
     if (!band.label) continue;
+    const halo = svgEl("text", {
+      x: 22,
+      y: band.y0 + 15,
+      class: "aam-layer-halo",
+      fill: tint,
+      stroke: tint,
+      "stroke-width": "6",
+      "stroke-linejoin": "round",
+      "aria-hidden": "true",
+      style: "opacity: 1"
+    });
+    halo.textContent = band.label;
     const lbl = svgEl("text", { x: 22, y: band.y0 + 15, class: "aam-layer-label", "data-layer": band.layer, fill: theme.dark ? c.stroke : c.text });
     lbl.textContent = band.label;
-    parentG.appendChild(lbl);
+    labelsG.append(halo, lbl);
   }
 }
 function foldMarker(id, name, x, y, folded, theme) {
@@ -1891,44 +1906,36 @@ function render({ model, el }) {
     };
     reader.readAsText(file);
   });
-  qs(toolbar, ".aam-btn-export-svg").addEventListener("click", () => {
-    const svg2 = graphContainer.querySelector("svg");
-    if (!svg2) return;
+  function exportClone() {
+    const svg2 = graphContainer.querySelector("svg.aam-svg");
+    if (!svg2) return null;
     const clone = svg2.cloneNode(true);
     const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
     style.textContent = `
       .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
       .aam-node-type { font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-layer-label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
+      .aam-layer-label, .aam-layer-halo { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; }
+      .aam-layer-label { opacity: 0.7; }
     `;
     clone.insertBefore(style, clone.firstChild);
-    const vb = clone.getAttribute("viewBox");
-    if (vb) {
-      const [, , w, h] = vb.split(" ");
-      clone.setAttribute("width", w);
-      clone.setAttribute("height", h);
-    }
-    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
+    const view = fitView ?? clone.getAttribute("viewBox") ?? "0 0 1200 800";
+    clone.setAttribute("viewBox", view);
+    const [, , width, height] = view.split(" ").map(Number);
+    return { clone, width, height };
+  }
+  qs(toolbar, ".aam-btn-export-svg").addEventListener("click", () => {
+    const out = exportClone();
+    if (!out) return;
+    out.clone.setAttribute("width", String(out.width));
+    out.clone.setAttribute("height", String(out.height));
+    const blob = new Blob([new XMLSerializer().serializeToString(out.clone)], { type: "image/svg+xml" });
     downloadBlob(blob, "archimate-diagram.svg");
   });
   qs(toolbar, ".aam-btn-export-png").addEventListener("click", () => {
-    const svg2 = graphContainer.querySelector("svg");
-    if (!svg2) return;
-    const clone = svg2.cloneNode(true);
-    const style = document.createElementNS("http://www.w3.org/2000/svg", "style");
-    style.textContent = `
-      .aam-node-label { font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-node-type { font: 8px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-      .aam-layer-label { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.7; }
-    `;
-    clone.insertBefore(style, clone.firstChild);
-    const vb = clone.getAttribute("viewBox");
-    let w = 1200, h = 800;
-    if (vb) {
-      const parts = vb.split(" ");
-      w = Math.ceil(Number(parts[2]) * 2);
-      h = Math.ceil(Number(parts[3]) * 2);
-    }
+    const out = exportClone();
+    if (!out) return;
+    const { clone } = out;
+    const w = Math.ceil(out.width * 2), h = Math.ceil(out.height * 2);
     clone.setAttribute("width", String(w));
     clone.setAttribute("height", String(h));
     const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });

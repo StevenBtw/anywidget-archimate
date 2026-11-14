@@ -852,6 +852,72 @@ test("a fold marker is a button for the keyboard: Enter folds, Space unfolds", {
   }
 });
 
+test("an SVG export is the whole diagram, also when the view is zoomed in", { skip }, async () => {
+  const { dom, el, close } = await mount();
+  const g = globalThis as Record<string, unknown>;
+  const createObjectURL = URL.createObjectURL;
+  const saved: Blob[] = [];
+  g.XMLSerializer = dom.window.XMLSerializer;
+  URL.createObjectURL = (blob: Blob) => { saved.push(blob); return "blob:test"; };
+  try {
+    const svg = q<SVGElement>(el, "svg.aam-svg");
+    q<HTMLElement>(el, ".aam-btn-fit").click();
+    const fit = svg.getAttribute("viewBox");
+    svg.setAttribute("viewBox", "40 40 120 80");
+    q<HTMLElement>(el, ".aam-btn-export-svg").click();
+    assert.equal(saved.length, 1, "one file");
+    const text = await saved[0].text();
+    const [, , w, h] = (fit ?? "").split(" ");
+    assert.match(text, new RegExp(`viewBox="${fit}"`), "the fitted view, not the zoomed one");
+    assert.match(text, new RegExp(`width="${w}" height="${h}"|height="${h}"[^>]*width="${w}"`));
+    assert.equal(svg.getAttribute("viewBox"), "40 40 120 80", "the view on screen stays as it was");
+  } finally {
+    URL.createObjectURL = createObjectURL;
+    delete g.XMLSerializer;
+    close();
+  }
+});
+
+test("band labels sit above the lines, each on a halo in its band's colour, below the elements", { skip }, async () => {
+  const { el, close } = await mount();
+  try {
+    const main = q<SVGGElement>(el, "g.aam-main");
+    const order = [...main.children].map((c) => c.getAttribute("class"));
+    assert.ok(order.indexOf("aam-band-labels") > order.indexOf("aam-edges"), `labels after the lines in ${order}`);
+    assert.ok(order.indexOf("aam-band-labels") < order.indexOf("aam-nodes"), `labels before the elements in ${order}`);
+    const bands = [...el.querySelectorAll<SVGRectElement>("rect.aam-band")];
+    const halos = [...el.querySelectorAll<SVGTextElement>(".aam-band-labels text.aam-layer-halo")];
+    const labels = [...el.querySelectorAll<SVGTextElement>(".aam-band-labels text.aam-layer-label")];
+    assert.ok(labels.length > 0 && halos.length === labels.length, "a halo under every label");
+    for (const [i, halo] of halos.entries()) {
+      assert.equal(halo.nextElementSibling, labels[i], "the label right above its halo");
+      assert.equal(halo.textContent, labels[i].textContent);
+      const band = bands.find((b) => Number(b.getAttribute("y")) + 15 === Number(halo.getAttribute("y")));
+      assert.ok(band, `a band under ${halo.textContent}`);
+      assert.equal(halo.getAttribute("stroke"), band.getAttribute("fill"), "the halo is the band's colour");
+      assert.equal(halo.getAttribute("style"), "opacity: 1", "the halo is opaque; only the label is faded");
+    }
+  } finally {
+    close();
+  }
+});
+
+test("a filter row is a label: clicking its name toggles it, and the name is the checkbox's", { skip }, async () => {
+  const { el, close } = await mount();
+  try {
+    const row = [...el.querySelectorAll<HTMLElement>(".aam-filter-item")].find((i) => i.querySelector(".aam-filter-name")?.textContent === "Technology Layer");
+    assert.ok(row, "a Technology Layer row");
+    assert.equal(row.tagName, "LABEL");
+    const box = q<HTMLInputElement>(row, "input");
+    assert.equal(box.labels?.[0], row, "the row labels its checkbox");
+    q<HTMLElement>(row, ".aam-filter-name").click();
+    assert.equal(box.checked, false, "the name toggles the checkbox");
+    assert.ok(!el.querySelector('.aam-node[data-id="t1"]'), "and the layer is hidden");
+  } finally {
+    close();
+  }
+});
+
 test("show_details false: a selection still reaches the host, the widget's own details stay closed", { skip }, async () => {
   const { model, dom, el, close } = await mount({ values: { elements: ELEMENTS, relationships: RELATIONSHIPS, show_details: false } });
   try {

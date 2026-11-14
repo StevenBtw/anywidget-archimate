@@ -430,14 +430,18 @@
   user-select: none;
 }
 
-.aam-layer-label {
+.aam-layer-label,
+.aam-layer-halo {
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  opacity: 0.7;
   pointer-events: none;
   user-select: none;
+}
+
+.aam-layer-label {
+  opacity: 0.7;
 }
 
 /* Edges */

@@ -6,11 +6,11 @@ Layered view release: the diagram is laid out as an architect's layered view, wi
 
 ### Added
 
-- **Layered layout**: each layer is a stack of labelled bands by role (actors and roles, business services, business processes and objects; application services and interfaces, applications and data; technology services, infrastructure), with elements in columns. Relationship lines run horizontally and vertically in the gaps between bands and elements, never through an element.
+- **Layered layout**: each layer is a stack of labelled bands by role (actors and roles, business services, business processes and objects; application services and interfaces, applications and data; technology services, infrastructure), with elements in columns. Relationship lines run horizontally and vertically in the gaps between bands and elements, never through an element, and break around the band labels.
 - **Folding**: the "−" on a container's header folds it into one box that shows how many elements it holds; its relationships attach to the box, one line per type and element. The "+" unfolds it.
 - **Nest relationships**: a relationship that more than half of a container's children share (same type, same element at the other end) is drawn once, at the container; hovering it marks the elements it stands for and lists the relationships. The "Nest relationships" box under "Nest elements" turns this off.
 - **Quiet lines**: relationship lines are drawn faint until their element is hovered or selected; then its lines, and those of the elements inside it, show at full strength. SVG and PNG exports draw every line in full.
-- **Readable on open**: a model too large to read when fitted opens at a readable scale from the top; "Fit" shows the whole model.
+- **Readable on open**: a model too large to read when fitted opens at a readable scale from the top; "Fit" shows the whole model. SVG and PNG exports are always the whole model, whatever the zoom on screen.
 - **Details panel**: the selected element's details open in a panel beside the diagram, also for a selection the host makes (by id alone, or before the widget is shown), and close when the selection clears. A host that shows the selection itself passes `show_details=False`.
 - **Keyboard focus**: buttons, menus, checkboxes and fold markers show a focus ring; a fold marker folds and unfolds with Enter or Space.
 
@@ -35,6 +35,7 @@ Layered view release: the diagram is laid out as an architect's layered view, wi
 - **Overlapping elements**: containers nested two or more levels deep no longer overlap their neighbours.
 - **PNG export background**: the theme's canvas colour instead of a fixed dark indigo (`#1e1e3a`) in dark mode.
 - **Narrow cells**: the toolbar no longer wraps; under 640px the layer legend leaves the toolbar and the details panel floats over the diagram.
+- **Filter rows**: clicking a filter's name toggles it, as its checkbox does, and screen readers announce each checkbox by its name.
 
 ## [0.5.2] - 2026-11-12
 
