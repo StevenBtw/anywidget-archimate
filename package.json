@@ -4,11 +4,11 @@
   "type": "module",
   "description": "Front end of the anywidget-archimate widget, in TypeScript (bundled with esbuild; type-checked with tsc)",
   "scripts": {
-    "build": "node scripts/build-esm.mjs",
-    "check": "node scripts/build-esm.mjs --check",
+    "build": "node scripts/build-esm.ts",
+    "check": "node scripts/build-esm.ts --check",
     "typecheck": "tsc --noEmit",
     "test": "uv run pytest tests/test_ui.py -k test_javascript",
-    "sync-tokens": "node scripts/sync-design-tokens.mjs"
+    "sync-tokens": "node scripts/sync-design-tokens.ts"
   },
   "engines": {
     "node": ">=22.18"

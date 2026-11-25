@@ -1,7 +1,7 @@
 """ESM and CSS for the ArchiMate widget.
 
 The front end is TypeScript (ui/*.ts), bundled by esbuild into ui/dist/widget.js
-(scripts/build-esm.mjs, `npm run build`; CI and tests/test_ui.py fail when it is stale).
+(scripts/build-esm.ts, `npm run build`; CI and tests/test_ui.py fail when it is stale).
 The layout is the widget's own (ui/layout.ts), so the widget needs no other library and
 makes no network requests.
 """
