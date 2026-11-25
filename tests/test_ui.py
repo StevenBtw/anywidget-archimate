@@ -54,7 +54,7 @@ def test_bundle_is_built_from_the_current_sources():
     if not (ROOT / "node_modules" / "esbuild").exists():
         pytest.skip("esbuild is not installed: npm ci in the package root")
     proc = subprocess.run(
-        [NODE, "scripts/build-esm.mjs", "--check"],
+        [NODE, "scripts/build-esm.ts", "--check"],
         capture_output=True,
         text=True,
         encoding="utf-8",
